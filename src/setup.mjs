@@ -13,11 +13,16 @@ function generateTopic() {
 }
 
 // 把 Hook 合并写入 settings.json（保留既有配置）
+// 返回 true=新写入，false=已存在跳过
 export function registerHooks(settingsPath, hookCommand) {
   let settings = {};
   try {
     settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
   } catch {}
+
+  // 已配置相同 Hook 则跳过
+  const existing = settings.hooks?.Stop?.[0]?.hooks?.[0]?.command;
+  if (existing === hookCommand) return false;
 
   settings.hooks = {
     Stop: [{ matcher: '*', hooks: [{ type: 'command', command: hookCommand }] }],
@@ -26,6 +31,7 @@ export function registerHooks(settingsPath, hookCommand) {
   };
   fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+  return true;
 }
 
 export function unregisterHooks(settingsPath) {
@@ -116,7 +122,7 @@ export async function runSetup({ generateQR }) {
   }
   saveConfig(config);
 
-  registerHooks(SETTINGS_PATH, hookCommand());
+  const claudeConfigured = registerHooks(SETTINGS_PATH, hookCommand());
   const codexConfigured = configureCodex();
 
   const subscribeUrl = `${config.server}/${config.topic}`;
@@ -132,6 +138,7 @@ export async function runSetup({ generateQR }) {
   }
 
   process.stdout.write('\n在 ntfy App 添加订阅，输入话题名称或扫描上方二维码。\n');
+  process.stdout.write(`Claude Code 配置：${claudeConfigured ? '已自动写入 ~/.claude/settings.json' : '已存在，跳过'}\n`);
   process.stdout.write(`Codex 配置：${codexConfigured ? '已自动写入 ~/.codex/config.toml' : '已存在，跳过'}\n`);
   process.stdout.write('模式切换：a4p out（外出/手机优先） / a4p home（终端优先） / a4p status\n');
   process.stdout.write('重启 Claude Code / Codex 会话后 Hook 生效。\n');
