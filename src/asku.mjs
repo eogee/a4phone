@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { loadConfig } from './config.mjs';
 import { sendNotification, waitForResponse } from './ntfy.mjs';
 
-export async function handleAskUserQuestion(input) {
+export async function handleAskUserQuestion(input, agentName) {
   const config = loadConfig();
   const questions = input.tool_input?.questions || [];
   if (!config.topic || !questions.length) return null;
@@ -25,7 +25,7 @@ export async function handleAskUserQuestion(input) {
     options.forEach((o, i) => lines.push(`${i + 1}. ${o.label}`));
     const sent = await sendNotification({
       ...config,
-      title: `Claude Code: ${q.header || 'Question'}`,
+      title: `${agentName}: ${q.header || 'Question'}`,
       message: lines.join('\n'),
       actions,
     });

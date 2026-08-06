@@ -27,7 +27,7 @@ function formatMessage(tool_name, tool_input) {
   return message.length > MESSAGE_MAX_LENGTH ? message.slice(0, MESSAGE_MAX_LENGTH) + '...' : message;
 }
 
-export async function handlePermissionRequest(input) {
+export async function handlePermissionRequest(input, agentName) {
   const config = loadConfig();
   if (!config.topic) return null;
 
@@ -43,7 +43,7 @@ export async function handlePermissionRequest(input) {
     actions.splice(1, 0, { action: 'http', label: 'Always Approve', url, method: 'POST', clear: false, body: JSON.stringify({ requestId, approved: true, alwaysAllow: true }) });
   }
 
-  const sent = await sendNotification({ ...config, title: `Claude Code: ${tool_name}`, message, actions });
+  const sent = await sendNotification({ ...config, title: `${agentName}: ${tool_name}`, message, actions });
   if (!sent) return null;
 
   const isPlan = tool_name === 'ExitPlanMode';

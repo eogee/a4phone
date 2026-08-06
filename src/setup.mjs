@@ -48,22 +48,23 @@ const CODEX_MARKER_START = '# ===== a4phone hooks (auto-generated) =====';
 const CODEX_MARKER_END = '# ===== end a4phone hooks =====';
 
 // 生成 Codex 的 Hook 定义（数组嵌套表格，根级别）
+// 命令带 codex 标识，便于 a4phone 动态显示触发方名称
 function codexHooksDefs() {
   return `[[hooks.Stop]]
 [[hooks.Stop.hooks]]
 type = "command"
-command = "a4p hook"
+command = "a4p hook codex"
 
 [[hooks.PreToolUse]]
 matcher = "AskUserQuestion"
 [[hooks.PreToolUse.hooks]]
 type = "command"
-command = "a4p hook"
+command = "a4p hook codex"
 
 [[hooks.PermissionRequest]]
 [[hooks.PermissionRequest.hooks]]
 type = "command"
-command = "a4p hook"`;
+command = "a4p hook codex"`;
 }
 
 // 写入 Codex 配置（保留既有内容，幂等）

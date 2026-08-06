@@ -35,8 +35,10 @@ if (cmd === 'setup') {
   } catch {
     process.exit(0);
   }
+  // 可选的 agent 标识：a4p hook [codex|claude]，默认 claude
+  const agent = process.argv[3] === 'codex' ? 'codex' : 'claude';
   const { dispatchHook } = await import('../src/hook.mjs');
-  const result = await dispatchHook(input);
+  const result = await dispatchHook(input, agent);
   if (result) {
     process.stdout.write(JSON.stringify(result) + '\n');
   }
