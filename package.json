@@ -1,0 +1,20 @@
+{
+  "name": "a4phone",
+  "version": "1.0.0",
+  "description": "Claude Code 远程手机交互：任务完成通知、AskUserQuestion 提问与 PermissionRequest 权限请求手机点选（ntfy.sh）",
+  "type": "module",
+  "bin": {
+    "a4p": "./bin/a4p.mjs"
+  },
+  "files": [
+    "bin",
+    "src"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "qrcode-terminal": "^0.12.0"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,27 @@
+// 系统原生通知（跨平台）
+import { spawn } from 'child_process';
+
+export function systemNotify(title, message) {
+  // 立即返回，不阻塞调用方
+  const clean = (s) => (s || '').replace(/"/g, "'");
+  const t = clean(title);
+  const m = clean(message);
+  let cmd;
+  if (process.platform === 'win32') {
+    // Windows：NotifyIcon 气泡通知（非阻塞，后台显示 3 秒）
+    cmd = [
+      '-NoProfile', '-Command',
+      `Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $n=New-Object System.Windows.Forms.NotifyIcon; $n.Icon=[System.Drawing.SystemIcons]::Information; $n.Visible=$true; $n.ShowBalloonTip(3000,"${t}","${m}",[System.Windows.Forms.ToolTipIcon]::Info); Start-Sleep 3; $n.Dispose()`,
+    ];
+  } else if (process.platform === 'darwin') {
+    cmd = ['-e', `display notification "${m}" with title "${t}"`];
+  } else {
+    cmd = [t, m];
+  }
+  const child = process.platform === 'win32'
+    ? spawn('powershell', cmd, { stdio: 'ignore', detached: process.platform !== 'win32' })
+    : process.platform === 'darwin'
+      ? spawn('osascript', cmd, { stdio: 'ignore' })
+      : spawn('notify-send', cmd, { stdio: 'ignore' });
+  child.unref();
+}
