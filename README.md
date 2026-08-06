@@ -49,9 +49,10 @@ a4p status     # 查看当前模式
 
 ## Codex
 
-使用 Codex 的读者在 `~/.codex/config.toml` 手动配置：
+`a4p setup` 会同时自动配置 Claude Code 和 Codex。Codex 配置追加到 `~/.codex/config.toml` 末尾（保留原有设置），结构如下：
 
 ```toml
+[features]
 hooks = true
 
 [[hooks.Stop]]
@@ -70,6 +71,8 @@ command = "a4p hook"
 type = "command"
 command = "a4p hook"
 ```
+
+> 注意：启用项必须放在 `[features]` 表内（`[features] hooks = true`），不能写成根级别的裸 `hooks = true`，否则与 `[[hooks.*]]` 冲突导致 TOML 解析错误。Codex 会话中需运行 `/hooks` 并手动信任新 Hook。
 
 ## 原理
 

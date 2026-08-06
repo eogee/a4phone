@@ -42,6 +42,70 @@ function hookCommand() {
   return 'a4p hook';
 }
 
+// Codex 配置路径与 a4phone 标记
+const CODEX_PATH = path.join(os.homedir(), '.codex', 'config.toml');
+const CODEX_MARKER_START = '# ===== a4phone hooks (auto-generated) =====';
+const CODEX_MARKER_END = '# ===== end a4phone hooks =====';
+
+// 生成 Codex 的 Hook 定义（数组嵌套表格，根级别）
+function codexHooksDefs() {
+  return `[[hooks.Stop]]
+[[hooks.Stop.hooks]]
+type = "command"
+command = "a4p hook"
+
+[[hooks.PreToolUse]]
+matcher = "AskUserQuestion"
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "a4p hook"
+
+[[hooks.PermissionRequest]]
+[[hooks.PermissionRequest.hooks]]
+type = "command"
+command = "a4p hook"`;
+}
+
+// 写入 Codex 配置（保留既有内容，幂等）
+// 追加到文件末尾，用显式表头包裹，避免根级键被吸收
+export function configureCodex() {
+  let content = '';
+  try {
+    content = fs.readFileSync(CODEX_PATH, 'utf-8');
+  } catch {}
+  if (content.includes(CODEX_MARKER_START)) return false; // 已配置
+
+  fs.mkdirSync(path.dirname(CODEX_PATH), { recursive: true });
+
+  const defs = `${CODEX_MARKER_START}\n${codexHooksDefs()}\n${CODEX_MARKER_END}`;
+
+  if (/^\[features\]\s*$/m.test(content)) {
+    // 已有 [features] 表：把 hooks = true 插入该表，末尾追加 Hook 定义
+    content = content.replace(/^\[features\]\s*$/m, '[features]\nhooks = true');
+    fs.writeFileSync(CODEX_PATH, content.trimEnd() + '\n\n' + defs + '\n');
+  } else {
+    // 无 [features]：末尾追加完整块（[features] 显式表头 + Hook 定义）
+    const block = `${CODEX_MARKER_START}\n[features]\nhooks = true\n\n${codexHooksDefs()}\n${CODEX_MARKER_END}`;
+    fs.writeFileSync(CODEX_PATH, (content ? content.trimEnd() + '\n\n' : '') + block + '\n');
+  }
+  return true;
+}
+
+// 移除 Codex 配置中的 a4phone Hook 段
+export function unconfigureCodex() {
+  let content = '';
+  try {
+    content = fs.readFileSync(CODEX_PATH, 'utf-8');
+  } catch {}
+  const start = content.indexOf(CODEX_MARKER_START);
+  const end = content.indexOf(CODEX_MARKER_END);
+  if (start !== -1 && end !== -1) {
+    content = content.slice(0, start) + content.slice(end + CODEX_MARKER_END.length);
+    content = content.replace(/\n{3,}/g, '\n\n').trim();
+    fs.writeFileSync(CODEX_PATH, content + '\n');
+  }
+}
+
 // setup 主流程
 export async function runSetup({ generateQR }) {
   const config = loadConfig();
@@ -52,6 +116,7 @@ export async function runSetup({ generateQR }) {
   saveConfig(config);
 
   registerHooks(SETTINGS_PATH, hookCommand());
+  const codexConfigured = configureCodex();
 
   const subscribeUrl = `${config.server}/${config.topic}`;
   const ntfyUrl = `ntfy://${new URL(config.server).host}/${config.topic}`;
@@ -66,7 +131,8 @@ export async function runSetup({ generateQR }) {
   }
 
   process.stdout.write('\n在 ntfy App 添加订阅，输入话题名称或扫描上方二维码。\n');
+  process.stdout.write(`Codex 配置：${codexConfigured ? '已自动写入 ~/.codex/config.toml' : '已存在，跳过'}\n`);
   process.stdout.write('模式切换：a4p out（外出/手机优先） / a4p home（终端优先） / a4p status\n');
-  process.stdout.write('重启 Claude Code 会话后 Hook 生效。\n');
+  process.stdout.write('重启 Claude Code / Codex 会话后 Hook 生效。\n');
   return config;
 }

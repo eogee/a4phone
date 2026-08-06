@@ -41,11 +41,12 @@ if (cmd === 'setup') {
     process.stdout.write(JSON.stringify(result) + '\n');
   }
 } else if (cmd === 'uninstall') {
-  const { unregisterHooks } = await import('../src/setup.mjs');
+  const { unregisterHooks, unconfigureCodex } = await import('../src/setup.mjs');
   unregisterHooks(SETTINGS_PATH);
+  unconfigureCodex();
   try { fs.unlinkSync(path.join(os.homedir(), '.a4phone.json')); } catch {}
   try { fs.unlinkSync(path.join(os.homedir(), '.a4phone-mode.json')); } catch {}
-  console.log('a4phone 已卸载：Hook 已移除，配置已删除。');
+  console.log('a4phone 已卸载：Claude Code / Codex Hook 已移除，配置已删除。');
 } else if (cmd === 'test') {
   const { loadConfig } = await import('../src/config.mjs');
   const { sendNotification } = await import('../src/ntfy.mjs');
