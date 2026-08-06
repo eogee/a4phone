@@ -13,7 +13,7 @@ Claude Code / Codex 远程手机交互包。通过 [ntfy.sh](https://ntfy.sh) �
 ## 安装
 
 ```bash
-npm install -g @eogee/a4phone
+npm install -g a4phone
 ```
 
 ## 使用
