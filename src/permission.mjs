@@ -31,6 +31,11 @@ export async function handlePermissionRequest(input, agentName) {
   const config = loadConfig();
   if (!config.topic) return null;
 
+  // AskUserQuestion 的交互由 asku 处理器负责，此处直接放行，避免冗余的原始 JSON 推送
+  if (input.tool_name === 'AskUserQuestion') {
+    return { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow' } } };
+  }
+
   const tool_name = input.tool_name || 'Unknown';
   const message = formatMessage(tool_name, input.tool_input);
   const requestId = crypto.randomUUID();
