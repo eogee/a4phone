@@ -13,9 +13,25 @@ import qrcode from 'qrcode-terminal';
 
 const SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json');
 
+function showHelp() {
+  console.log('a4phone — Claude Code / Codex 远程手机交互\n');
+  console.log('用法:');
+  console.log('  a4p setup       安装引导（生成话题、注册 Hook、显示二维码）');
+  console.log('  a4p out         外出模式（手机优先）');
+  console.log('  a4p home        终端优先模式（默认）');
+  console.log('  a4p status      查看当前模式');
+  console.log('  a4p test        发送测试通知');
+  console.log('  a4p uninstall   移除 Hook 和配置');
+  console.log('  a4p --version   查看版本号');
+  console.log('  a4p help        显示本帮助');
+}
+
 const cmd = process.argv[2];
 
-if (cmd === 'setup') {
+if (cmd === '--version' || cmd === '-v' || cmd === 'version') {
+  const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
+  console.log(pkg.version);
+} else if (cmd === 'setup') {
   const { runSetup } = await import('../src/setup.mjs');
   qrcode.setErrorLevel('L');
   await runSetup({ generateQR: (text, opts, cb) => qrcode.generate(text, opts, cb) });
@@ -59,13 +75,8 @@ if (cmd === 'setup') {
   }
   const ok = await sendNotification({ ...config, title: 'a4phone', message: '测试通知：如果手机收到，配置正常。' });
   console.log(ok ? '测试通知发送成功。' : '发送失败，请检查网络。');
+} else if (cmd === 'help' || cmd === '--help' || cmd === '-h') {
+  showHelp();
 } else {
-  console.log('a4phone — Claude Code 远程手机交互\n');
-  console.log('用法:');
-  console.log('  a4p setup       安装引导（生成话题、注册 Hook）');
-  console.log('  a4p out         外出模式（手机优先）');
-  console.log('  a4p home        终端优先模式（默认）');
-  console.log('  a4p status      查看当前模式');
-  console.log('  a4p test        发送测试通知');
-  console.log('  a4p uninstall   移除 Hook 和配置');
+  showHelp();
 }
