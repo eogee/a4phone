@@ -23,6 +23,8 @@ export async function handleAskUserQuestion(input, agentName) {
     }));
     const lines = [q.question];
     options.forEach((o, i) => lines.push(`${i + 1}. ${o.label}`));
+    lines.push(''); // 留空行分隔
+    lines.push(`（也可直接向话题 ${config.topic}-response 发送文字作答）`);
     const sent = await sendNotification({
       ...config,
       title: `${agentName}: ${q.header || 'Question'}`,

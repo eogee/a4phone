@@ -12,7 +12,9 @@ export async function sendNotification({ server, topic, title, message, actions 
   }
 }
 
-// 订阅响应话题（NDJSON 流），等待匹配 requestId 的决策
+// 订阅响应话题（NDJSON 流），等待决策
+//   HTTP action 回传：正文为 JSON { requestId, answer }，仅匹配相同 requestId
+//   手机自由文本：正文为纯文本，无 requestId，直接作为答案接受
 export async function waitForResponse({ server, topic, requestId, timeout }) {
   const url = `${server}/${topic}-response/json`;
   const controller = new AbortController();
@@ -32,8 +34,13 @@ export async function waitForResponse({ server, topic, requestId, timeout }) {
         if (!line.trim()) continue;
         try {
           const event = JSON.parse(line);
-          const msg = JSON.parse(event.message);
-          if (msg.requestId === requestId) {
+          let msg;
+          try {
+            msg = JSON.parse(event.message);
+          } catch {
+            msg = { answer: event.message }; // 纯文本：手机自由作答
+          }
+          if (msg.requestId === requestId || msg.requestId === undefined) {
             clearTimeout(timer);
             controller.abort();
             return msg;

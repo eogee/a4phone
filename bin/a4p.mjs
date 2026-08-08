@@ -5,6 +5,10 @@
 //   a4p home    终端优先模式（默认）
 //   a4p status  查看当前模式
 //   a4p hook    处理 Claude Code Hook（内部调用）
+//   a4p listen  启动续聊守护进程（后台 / --stop / --status）
+//   a4p resume  手动续聊最近会话
+//   a4p last    查看最近会话记录
+//   a4p test    发送测试通知
 //   a4p uninstall 移除 Hook 和配置
 import fs from 'fs';
 import path from 'path';
@@ -20,6 +24,11 @@ function showHelp() {
   console.log('  a4p out         外出模式（手机优先）');
   console.log('  a4p home        终端优先模式（默认）');
   console.log('  a4p status      查看当前模式');
+  console.log('  a4p listen      后台运行续聊守护进程（无窗口）');
+  console.log('  a4p listen --stop    停止守护进程');
+  console.log('  a4p listen --status  查看守护进程状态');
+  console.log('  a4p resume      手动续聊最近会话：a4p resume 要追加的内容');
+  console.log('  a4p last        查看最近会话记录');
   console.log('  a4p test        发送测试通知');
   console.log('  a4p uninstall   移除 Hook 和配置');
   console.log('  a4p --version   查看版本号');
@@ -64,7 +73,51 @@ if (cmd === '--version' || cmd === '-v' || cmd === 'version') {
   unconfigureCodex();
   try { fs.unlinkSync(path.join(os.homedir(), '.a4phone.json')); } catch {}
   try { fs.unlinkSync(path.join(os.homedir(), '.a4phone-mode.json')); } catch {}
+  try { fs.unlinkSync(path.join(os.homedir(), '.a4phone-last.json')); } catch {}
   console.log('a4phone 已卸载：Claude Code / Codex Hook 已移除，配置已删除。');
+} else if (cmd === 'listen') {
+  const sub = process.argv[3];
+  if (sub === '--stop') {
+    const { stopDaemon } = await import('../src/daemon.mjs');
+    await stopDaemon();
+  } else if (sub === '--status') {
+    const { daemonStatus } = await import('../src/daemon.mjs');
+    await daemonStatus();
+  } else if (sub === '--daemon-child') {
+    // 后台子进程：日志写入文件
+    const { runListen, createLogWriter } = await import('../src/listen.mjs');
+    const onLog = createLogWriter(path.join(os.homedir(), '.a4phone-daemon.log'));
+    await runListen({ onLog });
+  } else {
+    // 统一入口：a4p listen 即后台守护进程
+    const { startDaemon } = await import('../src/daemon.mjs');
+    await startDaemon();
+  }
+} else if (cmd === 'resume') {
+  const { runResume } = await import('../src/resume.mjs');
+  const text = process.argv.slice(3).join(' ');
+  if (!text.trim()) {
+    console.error('用法: a4p resume 要追加的内容');
+    process.exit(1);
+  }
+  const result = await runResume(text);
+  if (!result.ok) {
+    console.error(result.reason);
+    process.exit(1);
+  }
+  console.log(`续聊完成（退出码 ${result.code}），结果已推送手机。`);
+} else if (cmd === 'last') {
+  const { loadLastSession } = await import('../src/config.mjs');
+  const last = loadLastSession();
+  if (!last) {
+    console.log('暂无最近会话记录，完成一次任务后自动记录。');
+  } else {
+    console.log('最近会话:');
+    console.log(`  会话 ID: ${last.session_id}`);
+    console.log(`  目录:    ${last.cwd}`);
+    console.log(`  来源:    ${last.agent}`);
+    console.log(`  时间:    ${new Date(last.ts).toLocaleString()}`);
+  }
 } else if (cmd === 'test') {
   const { loadConfig } = await import('../src/config.mjs');
   const { sendNotification } = await import('../src/ntfy.mjs');
