@@ -6,9 +6,7 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-
-const DAEMON_JSON = path.join(os.homedir(), '.a4phone-daemon.json');
-const LOG_PATH = path.join(os.homedir(), '.a4phone-daemon.log');
+import { DAEMON_JSON, LOG_PATH, ensureDir } from './paths.mjs';
 
 function getScriptPath() {
   // 优先用 process.argv[1]（调用入口），兜底用模块路径
@@ -36,6 +34,7 @@ export async function startDaemon() {
   } catch {}
 
   const scriptPath = getScriptPath();
+  ensureDir();
   const logFd = fs.openSync(LOG_PATH, 'a');
   const child = spawn(process.execPath, [scriptPath, 'listen', '--daemon-child'], {
     detached: true,
@@ -68,9 +67,13 @@ export async function stopDaemon() {
     return;
   }
 
-  // Windows 上使用 taskkill /f 杀死进程树
+  // 结束进程：Windows 用 taskkill 杀进程树，其他平台用 kill
   try {
-    spawn('taskkill', ['/pid', String(pid), '/f'], { stdio: 'ignore' });
+    if (process.platform === 'win32') {
+      spawn('taskkill', ['/pid', String(pid), '/f', '/t'], { stdio: 'ignore' }).on('error', () => {});
+    } else {
+      process.kill(pid, 'SIGTERM');
+    }
     // 给进程一点时间退出
     await new Promise((r) => setTimeout(r, 1000));
   } catch {}

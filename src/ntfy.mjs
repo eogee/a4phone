@@ -34,13 +34,17 @@ export async function waitForResponse({ server, topic, requestId, timeout }) {
         if (!line.trim()) continue;
         try {
           const event = JSON.parse(line);
+          // ntfy /json 连接建立后会先发 open 事件、之后周期发 keepalive，
+          // 这些事件没有 message 字段，跳过以免被误判为“手机自由文本”立即返回。
+          if (event.event !== 'message' || event.message == null) continue;
           let msg;
           try {
             msg = JSON.parse(event.message);
           } catch {
             msg = { answer: event.message }; // 纯文本：手机自由作答
           }
-          if (msg.requestId === requestId || msg.requestId === undefined) {
+          // action 回执：requestId 必须匹配；自由文本：无 requestId 且有 answer 才接受
+          if (msg.requestId === requestId || (msg.requestId === undefined && msg.answer)) {
             clearTimeout(timer);
             controller.abort();
             return msg;

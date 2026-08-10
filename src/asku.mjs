@@ -3,7 +3,34 @@ import crypto from 'crypto';
 import { loadConfig } from './config.mjs';
 import { sendNotification, waitForResponse } from './ntfy.mjs';
 
-export async function handleAskUserQuestion(input, agentName) {
+// 把手机答案构造成 hook 输出
+//   Claude Code：updatedInput.answers 改写工具输入（工具自带跳过用户交互的实现）
+//   Codex：提问工具是 request_user_input，其 handler 忽略输入里的 answers，只能阻断该工具调用、
+//          并把答案写进 permissionDecisionReason，让模型看到"用户已作答"后直接采用答案继续
+export function buildAskOutput(agent, questions, answers) {
+  if (agent === 'codex') {
+    const lines = Object.entries(answers).map(([q, a], i) => `${i + 1}. ${q} → ${a}`);
+    const reason =
+      '用户在手机端回答了以下提问，请直接采用这些答案继续当前任务，不要再调用 request_user_input 工具：\n' +
+      lines.join('\n');
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: reason,
+      },
+    };
+  }
+  return {
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'allow',
+      updatedInput: { questions, answers },
+    },
+  };
+}
+
+export async function handleAskUserQuestion(input, agentName, agent = 'claude') {
   const config = loadConfig();
   const questions = input.tool_input?.questions || [];
   if (!config.topic || !questions.length) return null;
@@ -37,11 +64,5 @@ export async function handleAskUserQuestion(input, agentName) {
     answers[q.question] = resp.answer;
   }
 
-  return {
-    hookSpecificOutput: {
-      hookEventName: 'PreToolUse',
-      permissionDecision: 'allow',
-      updatedInput: { questions, answers },
-    },
-  };
+  return buildAskOutput(agent, questions, answers);
 }

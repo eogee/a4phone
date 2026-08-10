@@ -20,10 +20,16 @@ export async function dispatchHook(input, agent) {
     return handleStop(input, name);
   }
 
-  if (event === 'PreToolUse' && input.tool_name === 'AskUserQuestion') {
-    await systemNotify(name, '有提问需要处理');
-    if (!isOut) return null; // 终端优先：不阻塞
-    return handleAskUserQuestion(input, name);
+  if (event === 'PreToolUse') {
+    // Claude Code 的提问工具叫 AskUserQuestion；Codex 的叫 request_user_input
+    const isAsk =
+      input.tool_name === 'AskUserQuestion' ||
+      (agent === 'codex' && input.tool_name === 'request_user_input');
+    if (isAsk) {
+      await systemNotify(name, '有提问需要处理');
+      if (!isOut) return null; // 终端优先：不阻塞
+      return handleAskUserQuestion(input, name, agent);
+    }
   }
 
   if (event === 'PermissionRequest') {

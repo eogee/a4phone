@@ -1,9 +1,8 @@
-// 交互模式读写：~/.a4phone-mode.json（out=外出/手机优先，home=终端优先）
+// 交互模式读写：~/.a4phone/mode.json（out=外出/手机优先，home=终端优先）
 import fs from 'fs';
-import os from 'os';
-import path from 'path';
+import { MODE_PATH, ensureDir } from './paths.mjs';
 
-export const MODE_PATH = path.join(os.homedir(), '.a4phone-mode.json');
+export { MODE_PATH } from './paths.mjs'; // 兼容旧引用
 
 export function readMode() {
   try {
@@ -14,5 +13,6 @@ export function readMode() {
 }
 
 export function setMode(mode) {
+  ensureDir();
   fs.writeFileSync(MODE_PATH, JSON.stringify({ mode: mode === 'out' ? 'out' : 'home' }));
 }

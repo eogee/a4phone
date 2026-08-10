@@ -1,6 +1,8 @@
 // 从会话记录（transcript）抽取"AI 最后输出的一段话"
 //   Claude Code：JSONL，type="assistant" 的 message.content[] 中 type="text" 的 text 块
-//   Codex：JSONL，type="event_msg" 且 payload.type="task_complete" 的 payload.last_agent_message
+//   Codex：JSONL，type="response_item" 且 payload.type="message" 的 assistant 消息——它随消息即时写入，
+//          而 task_complete 事件比消息晚 ~1.4s 才落盘，Codex 触发 Stop 时读取往往还没写入，
+//          所以必须先取 message 事件，task_complete 仅作文件稳定时的兜底。
 import fs from 'fs';
 
 const MAX_LENGTH = 1000; // 推送内容截断长度（中文约 3000 字节，留足 ntfy 4KB 上限余量）
@@ -25,7 +27,14 @@ export function extractLastOutput(transcriptPath) {
           .map((b) => b.text);
         if (parts.length) text = parts.join('\n');
       }
-      // Codex：task_complete 事件自带最后一条 agent 消息
+      // Codex：response_item 的 assistant 消息（随消息即时写入，Stop 时已可用）
+      if (o?.type === 'response_item' && o.payload?.type === 'message' && o.payload?.role === 'assistant') {
+        const parts = (o.payload.content || [])
+          .filter((b) => b?.type === 'output_text' && b.text)
+          .map((b) => b.text);
+        if (parts.length) text = parts.join('\n');
+      }
+      // Codex：task_complete 兜底（自带最后一条 agent 消息；比 message 晚 ~1.4s 写入，仅文件稳定时可用）
       if (o?.type === 'event_msg' && o.payload?.type === 'task_complete' && o.payload?.last_agent_message) {
         text = o.payload.last_agent_message;
       }

@@ -62,7 +62,7 @@ export async function runListen({ onLog = (s) => console.log(s) } = {}) {
     onLog(`收到续聊请求：${text.slice(0, 60)}`);
     const result = await runResume(text, { config, onLog });
     onLog(result.ok
-      ? `消息已处理（${result.mode === 'live' ? '实时注入终端' : 'resume 续聊'}${result.code != null ? `，退出码 ${result.code}` : ''}），结果已推送手机。`
+      ? `消息已处理（resume 续聊${result.code != null ? `，退出码 ${result.code}` : ''}），结果已推送手机。`
       : `续聊失败：${result.reason}`);
     busy = false;
     if (queue.length) {

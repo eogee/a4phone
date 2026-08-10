@@ -1,20 +1,19 @@
-// 续聊：把手机发来的文本作为下一条用户消息注入当前会话。
-//   优先尝试实时注入（PowerShell 打字到正在运行的终端窗口），
-//   失败则回退到 claude --resume --continue（非运行态可用）。
-//   实时注入后轮询 transcript 提取 AI 回复推回手机。
+// 续聊：把手机发来的文本作为下一条用户消息，续聊当前会话并回推回复
+//   Claude Code：claude --resume <id> --continue -p（headless，stdin 作为消息、stdout 捕获回复）
+//   Codex：codex exec resume <id> -o <文件> -（headless，stdin 作为消息、-o 把最后一条回复写入文件）
+//   若 Codex 会话被窗口占用（thread-store conflict），自动 fork 成新线程续聊，无需关闭原窗口
 import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import crypto from 'crypto';
 import { spawn } from 'child_process';
-import { loadConfig, loadLastSession } from './config.mjs';
+import { loadConfig, loadLastSession, saveLastSession } from './config.mjs';
 import { sendNotification } from './ntfy.mjs';
 import { readMode, setMode } from './mode.mjs';
-import { injectToTerminal } from './inject.mjs';
-import { extractLastOutput } from './transcript.mjs';
 
 const MAX_REPLY = 1000; // 回推输出截断长度
-const INJECT_REPLY_TIMEOUT = 120000; // 实时注入后等待 AI 回复的最长时间（毫秒）
-const INJECT_REPLY_POLL = 2000; // 轮询间隔
 
-// 去除 ANSI 转义与空行，取末尾一段（Claude Code 非 TTY 下 stdout 尾部即最终回复）
+// 去除 ANSI 转义与空行，取末尾一段（headless 模式输出尾部即最终回复）
 function extractReply(output) {
   const clean = (output || '')
     .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')
@@ -27,25 +26,128 @@ function extractReply(output) {
   return clean.length > MAX_REPLY ? '...（输出较长已截断）\n' + clean.slice(-MAX_REPLY) : clean;
 }
 
-// 等待 claude 进程结束，返回 { ok, code, stdout, stderr, reason }
-function spawnClaude({ args, cwd, input, timeoutMs }) {
+// 按最近会话的 agent 构建续聊命令（纯函数，便于测试）
+export function buildResumeArgs(agent, sessionId, cwd, replyFile) {
+  if (agent === 'Codex') {
+    // codex exec resume 不接受 -C（工作目录存在会话里），仅由 spawn 的 cwd 决定启动目录
+    return {
+      command: 'codex',
+      args: [
+        'exec', 'resume',
+        '--dangerously-bypass-hook-trust', // 自动化场景：hook 信任已由用户确认，避免信任失效导致 exec 中断
+        '--skip-git-repo-check',
+        '-o', replyFile, // 最后一条回复写入该文件
+        sessionId,
+        '-', // 提示词从 stdin 读取
+      ],
+    };
+  }
+  return { command: 'claude', args: ['--resume', sessionId, '--continue', '-p'] };
+}
+
+// Codex 续聊独占约束：会话仍被其他进程持有写锁时，给出可操作的提示（而非裸错误文本）
+export function codexConflictReason(stderr) {
+  const s = stderr || '';
+  if (/thread-store conflict|already has an active writer/.test(s)) {
+    return '续聊未执行：该 Codex 会话仍被占用（对应的 Codex 窗口还开着，会话持有独占锁）。\n' +
+      '请先关闭那个 Codex 终端窗口，让会话释放锁，再从手机重新发送消息。';
+  }
+  return null;
+}
+
+// 生成近似 codex 线程 ID 格式的随机 ID（32 位十六进制按 8-4-4-4-12 连字符）
+export function generateThreadId() {
+  const hex = crypto.randomBytes(16).toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+// 定位会话的 rollout 文件：优先用记录路径，兜底扫描 ~/.codex/sessions/**/rollout-*-<id>.jsonl
+function findCodexRollout(sessionId, transcriptPath) {
+  if (transcriptPath && fs.existsSync(transcriptPath)) return transcriptPath;
+  const base = path.join(os.homedir(), '.codex', 'sessions');
+  try {
+    for (const year of fs.readdirSync(base)) {
+      const yDir = path.join(base, year);
+      if (!fs.statSync(yDir).isDirectory()) continue;
+      for (const month of fs.readdirSync(yDir)) {
+        const mDir = path.join(yDir, month);
+        if (!fs.statSync(mDir).isDirectory()) continue;
+        for (const day of fs.readdirSync(mDir)) {
+          const dDir = path.join(mDir, day);
+          if (!fs.statSync(dDir).isDirectory()) continue;
+          for (const f of fs.readdirSync(dDir)) {
+            if (f.includes(sessionId) && f.endsWith('.jsonl')) {
+              const p = path.join(dDir, f);
+              if (fs.existsSync(p)) return p;
+            }
+          }
+        }
+      }
+    }
+  } catch {}
+  return null;
+}
+
+// fork Codex 会话：复制 rollout 文件为新线程 ID（不建写锁），返回新会话信息；失败返回 null
+//   - 原会话（含原窗口）毫发无损，可继续使用
+//   - 手机续聊在 fork 上继续，多轮对话天然成立
+export function forkCodexSession({ sessionId, transcriptPath }) {
+  const src = findCodexRollout(sessionId, transcriptPath);
+  if (!src) return null;
+  const newId = generateThreadId();
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const ts = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+  const dst = path.join(path.dirname(src), `rollout-${ts}-${newId}.jsonl`);
+  let content;
+  try {
+    content = fs.readFileSync(src, 'utf-8');
+  } catch {
+    return null;
+  }
+  // 替换所有旧线程 ID，并把 session_meta 时间戳更新为现在（使其成为最新会话）
+  const replaced = content.split(sessionId).join(newId);
+  const lines = replaced.split('\n');
+  if (lines[0]) {
+    try {
+      const meta = JSON.parse(lines[0]);
+      if (meta.type === 'session_meta' && meta.payload) {
+        meta.payload.timestamp = now.toISOString();
+        lines[0] = JSON.stringify(meta);
+      }
+    } catch {}
+  }
+  try {
+    fs.writeFileSync(dst, lines.join('\n'));
+  } catch {
+    return null;
+  }
+  return { newId, newTranscriptPath: dst };
+}
+
+// 等待 CLI 进程结束，返回 { ok, code, stdout, stderr, reason, timedOut }
+function spawnCli({ command, args, cwd, input, timeoutMs }) {
   return new Promise((resolve) => {
     const useCmd = process.platform === 'win32';
-    const command = useCmd ? 'cmd' : 'claude';
-    const commandArgs = useCmd ? ['/c', 'claude', ...args] : args;
+    // 用 ComSpec 全路径启动 cmd，避免依赖 PATH 里能找到 cmd（沙箱/受限环境可能没有）
+    const cmd = useCmd ? process.env.ComSpec || 'cmd' : command;
+    const cmdArgs = useCmd ? ['/c', command, ...args] : args;
     let child;
     try {
       // A4P_RESUME 标记：让 Stop Hook 识别这是续聊子进程，避免重复推送"任务已完成"
-      child = spawn(command, commandArgs, { cwd, shell: false, env: { ...process.env, A4P_RESUME: '1' } });
+      child = spawn(cmd, cmdArgs, { cwd, shell: false, env: { ...process.env, A4P_RESUME: '1' } });
     } catch (err) {
-      resolve({ ok: false, reason: `无法启动 claude：${err.message}` });
+      resolve({ ok: false, reason: `无法启动 ${command}：${err.message}` });
       return;
     }
     let stdout = '';
     let stderr = '';
+    let timedOut = false;
     const timer = setTimeout(() => {
+      timedOut = true;
       if (useCmd) {
-        spawn('taskkill', ['/pid', String(child.pid), '/f', '/t']);
+        const taskkill = path.join(process.env.WINDIR || 'C:\\Windows', 'System32', 'taskkill.exe');
+        spawn(taskkill, ['/pid', String(child.pid), '/f', '/t']).on('error', () => child.kill());
       } else {
         child.kill('SIGKILL');
       }
@@ -54,11 +156,11 @@ function spawnClaude({ args, cwd, input, timeoutMs }) {
     child.stderr.on('data', (d) => { stderr += d; });
     child.on('error', (err) => {
       clearTimeout(timer);
-      resolve({ ok: false, reason: `无法启动 claude：${err.message}` });
+      resolve({ ok: false, reason: `无法启动 ${command}：${err.message}` });
     });
     child.on('close', (code) => {
       clearTimeout(timer);
-      resolve({ ok: true, code, stdout, stderr });
+      resolve({ ok: true, code, stdout, stderr, timedOut });
     });
     try {
       child.stdin.write(input + '\n');
@@ -67,33 +169,16 @@ function spawnClaude({ args, cwd, input, timeoutMs }) {
   });
 }
 
-// 实时注入：打字到终端后，轮询 transcript 等待 AI 产生新回复
-async function waitForReply(transcriptPath, { timeoutMs, poll }) {
-  if (!transcriptPath) return null;
-  const start = Date.now();
-  let lastText = '';
-  while (Date.now() - start < timeoutMs) {
-    const latest = extractLastOutput(transcriptPath);
-    if (latest && latest !== lastText) {
-      lastText = latest;
-      // 给一点时间让回复稳定，再返回
-      await new Promise((r) => setTimeout(r, poll));
-      return latest;
-    }
-    await new Promise((r) => setTimeout(r, poll));
-  }
-  return lastText || null;
-}
-
-// 执行一次续聊，返回 { ok, reason?, code?, mode? }
-export async function runResume(text, { config = null, agentName = 'Claude Code', onLog = (s) => {} } = {}) {
+// 执行一次续聊，返回 { ok, reason?, code? }
+export async function runResume(text, { config = null, onLog = (s) => {} } = {}) {
   config = config || loadConfig();
   if (!config.topic) return { ok: false, reason: '未配置话题，请先运行 a4p setup。' };
 
   const last = loadLastSession();
   if (!last?.session_id) return { ok: false, reason: '暂无最近会话，请先完成一次任务触发 Stop 事件。' };
-  if (last.agent && last.agent !== 'Claude Code') {
-    return { ok: false, reason: `续聊目前仅支持 Claude Code 会话（最近会话来自 ${last.agent}）。` };
+  const agent = last.agent || 'Claude Code';
+  if (agent !== 'Claude Code' && agent !== 'Codex') {
+    return { ok: false, reason: `续聊暂不支持 ${agent} 会话。` };
   }
   const textClean = (text || '').trim();
   if (!textClean) return { ok: false, reason: '续聊内容为空。' };
@@ -104,41 +189,73 @@ export async function runResume(text, { config = null, agentName = 'Claude Code'
   if (lockedOut) setMode('out');
 
   const cwd = last.cwd && last.cwd !== '未知目录' ? last.cwd : process.cwd();
+  let sessionId = last.session_id;
+  let transcriptPath = last.transcript_path;
+  let replyFile = path.join(os.tmpdir(), `a4p-reply-${process.pid}-${Date.now()}.txt`);
+  let { command, args } = buildResumeArgs(agent, sessionId, cwd, replyFile);
 
-  // 1) 优先实时注入到正在运行的终端窗口
-  const injected = await injectToTerminal(textClean, { windowPattern: config.windowPattern });
-  if (injected.ok) {
-    // 注入成功：轮询 transcript 等待 AI 回复并推回手机
-    const reply = await waitForReply(last.transcript_path, {
-      timeoutMs: INJECT_REPLY_TIMEOUT,
-      poll: INJECT_REPLY_POLL,
-    });
-    await sendNotification({
-      ...config,
-      title: agentName,
-      message: reply ? `${textClean}\n\n${reply}` : `消息已注入当前会话：${textClean}`,
-    });
-    if (lockedOut) setMode(prevMode);
-    return { ok: true, mode: 'live', reply };
-  }
-  onLog(`实时注入失败（${injected.reason}），回退到 --resume`);
-
-  // 2) 回退：--resume --continue（会话未运行时可注入并捕获回复）
-  const proc = await spawnClaude({
-    args: ['--resume', last.session_id, '--continue'],
+  let proc = await spawnCli({
+    command,
+    args,
     cwd,
     input: textClean,
     timeoutMs: config.resumeTimeout * 1000,
   });
 
+  // Codex 会话被窗口占用（thread-store conflict）时自动 fork 续聊：不关窗口也能续聊
+  //   原会话（含原窗口）毫发无损；手机续聊在 fork 上继续，多轮对话天然成立
+  let forked = false;
+  if (proc.ok && command === 'codex' && codexConflictReason(proc.stderr)) {
+    const fork = forkCodexSession({ sessionId, transcriptPath });
+    if (fork) {
+      forked = true;
+      sessionId = fork.newId;
+      transcriptPath = fork.newTranscriptPath;
+      onLog(`Codex 会话被占用，已 fork 为新会话 ${fork.newId.slice(0, 8)} 继续续聊（原窗口不受影响）`);
+      saveLastSession({ session_id: fork.newId, cwd, agent: 'Codex', transcript_path: fork.newTranscriptPath });
+      try { fs.unlinkSync(replyFile); } catch {}
+      replyFile = path.join(os.tmpdir(), `a4p-reply-${process.pid}-${Date.now()}.txt`);
+      ({ command, args } = buildResumeArgs(agent, fork.newId, cwd, replyFile));
+      proc = await spawnCli({
+        command,
+        args,
+        cwd,
+        input: textClean,
+        timeoutMs: config.resumeTimeout * 1000,
+      });
+    }
+  }
+
   if (lockedOut) setMode(prevMode);
 
   if (!proc.ok) return { ok: false, reason: proc.reason };
 
-  const reply = extractReply(proc.stdout) || extractReply(proc.stderr);
-  const message = reply
-    ? `续聊已完成（退出码 ${proc.code}）\n\n${reply}`
-    : `续聊已完成（退出码 ${proc.code}，无文本输出）`;
-  await sendNotification({ ...config, title: agentName, message });
+  // 回复来源：Codex 用 -o 写入的文件（若已生成），其余走 stdout 尾部
+  let reply = extractReply(proc.stdout) || extractReply(proc.stderr);
+  if (command === 'codex') {
+    try {
+      const fileReply = fs.readFileSync(replyFile, 'utf-8');
+      reply = extractReply(fileReply) || reply;
+    } catch {}
+  }
+  try { fs.unlinkSync(replyFile); } catch {}
+
+  const name = agent === 'Codex' ? 'Codex' : 'Claude Code';
+  let message;
+  const conflict = command === 'codex' && !forked ? codexConflictReason(proc.stderr) : null;
+  if (conflict) {
+    onLog('续聊失败：Codex 会话仍被占用（独占锁未释放）');
+    message = conflict;
+  } else if (proc.timedOut) {
+    onLog(`续聊超时（超过 ${config.resumeTimeout} 秒）已中断`);
+    message = reply
+      ? `续聊超时已中断（以下为超时前已生成的回复）\n\n${reply}`
+      : `续聊超时，未获取到回复。`;
+  } else {
+    message = reply
+      ? `续聊已完成（退出码 ${proc.code}）\n\n${reply}`
+      : `续聊已完成（退出码 ${proc.code}，无文本输出）`;
+  }
+  await sendNotification({ ...config, title: name, message });
   return { ok: true, code: proc.code };
 }

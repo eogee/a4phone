@@ -14,8 +14,12 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import qrcode from 'qrcode-terminal';
+import { migrateLegacy, LOG_PATH, A4P_DIR } from '../src/paths.mjs';
 
 const SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json');
+
+// 把旧版家目录散点文件迁移到 ~/.a4phone/（幂等，无旧文件时仅建目录）
+migrateLegacy();
 
 function showHelp() {
   console.log('a4phone — Claude Code / Codex 远程手机交互\n');
@@ -69,11 +73,16 @@ if (cmd === '--version' || cmd === '-v' || cmd === 'version') {
   }
 } else if (cmd === 'uninstall') {
   const { unregisterHooks, unconfigureCodex } = await import('../src/setup.mjs');
+  const { stopDaemon } = await import('../src/daemon.mjs');
+  // 先停守护进程：Windows 上守护进程持有 daemon.log 句柄，直接删目录会失败且异常被静默吞掉
+  await stopDaemon();
   unregisterHooks(SETTINGS_PATH);
   unconfigureCodex();
-  try { fs.unlinkSync(path.join(os.homedir(), '.a4phone.json')); } catch {}
-  try { fs.unlinkSync(path.join(os.homedir(), '.a4phone-mode.json')); } catch {}
-  try { fs.unlinkSync(path.join(os.homedir(), '.a4phone-last.json')); } catch {}
+  // 新版 ~/.a4phone/ 目录 + 旧版家目录散点文件一并清理
+  try { fs.rmSync(A4P_DIR, { recursive: true, force: true }); } catch {}
+  for (const f of ['.a4phone.json', '.a4phone-mode.json', '.a4phone-last.json', '.a4phone-daemon.json', '.a4phone-daemon.log']) {
+    try { fs.unlinkSync(path.join(os.homedir(), f)); } catch {}
+  }
   console.log('a4phone 已卸载：Claude Code / Codex Hook 已移除，配置已删除。');
 } else if (cmd === 'listen') {
   const sub = process.argv[3];
@@ -86,7 +95,7 @@ if (cmd === '--version' || cmd === '-v' || cmd === 'version') {
   } else if (sub === '--daemon-child') {
     // 后台子进程：日志写入文件
     const { runListen, createLogWriter } = await import('../src/listen.mjs');
-    const onLog = createLogWriter(path.join(os.homedir(), '.a4phone-daemon.log'));
+    const onLog = createLogWriter(LOG_PATH);
     await runListen({ onLog });
   } else {
     // 统一入口：a4p listen 即后台守护进程

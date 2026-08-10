@@ -13,6 +13,9 @@
   "engines": {
     "node": ">=18"
   },
+  "scripts": {
+    "test": "node --test"
+  },
   "dependencies": {
     "qrcode-terminal": "^0.12.0"
   },

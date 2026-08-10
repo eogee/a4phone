@@ -1,10 +1,8 @@
-// 配置读写：~/.a4phone.json
+// 配置读写：~/.a4phone/config.json
 import fs from 'fs';
-import os from 'os';
-import path from 'path';
+import { CONFIG_PATH, LAST_PATH, ensureDir } from './paths.mjs';
 
-export const CONFIG_PATH = path.join(os.homedir(), '.a4phone.json');
-export const LAST_PATH = path.join(os.homedir(), '.a4phone-last.json');
+export { CONFIG_PATH, LAST_PATH } from './paths.mjs'; // 兼容旧引用
 
 export function loadConfig() {
   try {
@@ -14,17 +12,17 @@ export function loadConfig() {
     return {
       topic: cfg.topic || '',
       server: (cfg.server || 'https://ntfy.sh').replace(/\/+$/, ''),
-      timeout: cfg.timeout ?? 30,
+      timeout: cfg.timeout ?? 60,
       planTimeout: cfg.planTimeout ?? 300,
       resumeTimeout: cfg.resumeTimeout ?? 1800, // 续聊超时（秒），默认 30 分钟
-      windowPattern: cfg.windowPattern ?? 'claude code', // 实时注入匹配的终端窗口标题关键字
     };
   } catch {
-    return { topic: '', server: 'https://ntfy.sh', timeout: 30, planTimeout: 300, resumeTimeout: 1800, windowPattern: 'claude code' };
+    return { topic: '', server: 'https://ntfy.sh', timeout: 60, planTimeout: 300, resumeTimeout: 1800 };
   }
 }
 
 export function saveConfig(cfg) {
+  ensureDir();
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
 }
 
@@ -40,5 +38,6 @@ export function loadLastSession() {
 }
 
 export function saveLastSession(session) {
+  ensureDir();
   fs.writeFileSync(LAST_PATH, JSON.stringify({ ...session, ts: Date.now() }, null, 2));
 }

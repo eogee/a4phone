@@ -1,0 +1,58 @@
+// a4phone 状态文件统一存放目录：~/.a4phone/（替代散落在家目录的单点文件）
+//   config.json  ← ~/.a4phone.json
+//   mode.json    ← ~/.a4phone-mode.json
+//   last.json    ← ~/.a4phone-last.json
+//   daemon.json  ← ~/.a4phone-daemon.json
+//   daemon.log   ← ~/.a4phone-daemon.log
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
+export const A4P_DIR = path.join(os.homedir(), '.a4phone');
+export const CONFIG_PATH = path.join(A4P_DIR, 'config.json');
+export const MODE_PATH = path.join(A4P_DIR, 'mode.json');
+export const LAST_PATH = path.join(A4P_DIR, 'last.json');
+export const DAEMON_JSON = path.join(A4P_DIR, 'daemon.json');
+export const LOG_PATH = path.join(A4P_DIR, 'daemon.log');
+
+// 旧版散落在家目录的单文件 → 迁移到 ~/.a4phone/（新路径不存在时才移动）
+const LEGACY_PATHS = {
+  [CONFIG_PATH]: path.join(os.homedir(), '.a4phone.json'),
+  [MODE_PATH]: path.join(os.homedir(), '.a4phone-mode.json'),
+  [LAST_PATH]: path.join(os.homedir(), '.a4phone-last.json'),
+  [DAEMON_JSON]: path.join(os.homedir(), '.a4phone-daemon.json'),
+  [LOG_PATH]: path.join(os.homedir(), '.a4phone-daemon.log'),
+};
+
+function moveIfExists(oldPath, newPath) {
+  try {
+    fs.renameSync(oldPath, newPath);
+    return true;
+  } catch {
+    // rename 失败（如日志被占用）则回退复制+删除
+    try {
+      fs.copyFileSync(oldPath, newPath);
+      fs.unlinkSync(oldPath);
+      return true;
+    } catch {
+      return false; // 迁移失败则保留旧文件
+    }
+  }
+}
+
+// 确保目录存在，并把旧版散点文件迁移进来；返回是否发生过迁移
+export function migrateLegacy() {
+  fs.mkdirSync(A4P_DIR, { recursive: true });
+  let migrated = false;
+  for (const [newPath, oldPath] of Object.entries(LEGACY_PATHS)) {
+    if (fs.existsSync(oldPath) && !fs.existsSync(newPath)) {
+      if (moveIfExists(oldPath, newPath)) migrated = true;
+    }
+  }
+  return migrated;
+}
+
+// 确保目录存在（写入前调用）
+export function ensureDir() {
+  fs.mkdirSync(A4P_DIR, { recursive: true });
+}
