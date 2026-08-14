@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { loadConfig, saveConfig } from './config.mjs';
 
 const SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json');
@@ -257,6 +258,97 @@ export function unconfigureCodex(codexPath = CODEX_PATH) {
   }
 }
 
+// ── DSH（DeepSeek Harness）Hook 插件挂载 ─────────────────────────────
+// 复用本包 dsh/ 插件（Cordis 插件，监听 DSH 会话事件与工具/审批管线），
+// 以 insert 形式追加到 web profile 的 cordis.patch.yml（热生效，无需重启）。
+// 目标 profile 与插件的 name 相对路径在运行时计算，避免硬编码。
+const DSH_PROFILE_NAME = 'web';
+const DSH_PROFILE_DIR = path.join(os.homedir(), '.dsh', 'profiles', DSH_PROFILE_NAME);
+const DSH_PATCH_PATH = path.join(DSH_PROFILE_DIR, 'cordis.patch.yml');
+const DSH_MARKER_START = '# ===== a4phone dsh-hook (auto-generated) =====';
+const DSH_MARKER_END = '# ===== end a4phone dsh-hook =====';
+
+// 本包 dsh 插件入口文件绝对路径（setup.mjs 位于 src/，包根为 ../）
+function dshPluginEntry() {
+  return path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dsh', 'lib', 'index.js');
+}
+
+// Windows 下把反斜杠路径转正斜杠（loader 按 URL 语义解析 name）
+function toPosix(p) {
+  return p.split(path.sep).join('/');
+}
+
+// 生成 dsh-hook 的 patch 挂载块（marker 包裹，便于幂等替换/清理）
+function dshHookBlock(relName) {
+  return `${DSH_MARKER_START}\n- insert:\n    - id: dsh-hook\n      name: "${relName}"\n${DSH_MARKER_END}`;
+}
+
+// 移除 cordis.patch.yml 中的 dsh-hook 挂载：
+//   1) 本插件 marker 包裹的块；2) 任何顶层 insert 块（含旧版手动挂载 id: dsh-hook）。
+// 保留 profile 头注释与其他插件条目。
+function stripDshHookBlocks(content) {
+  const lines = content.split('\n');
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    // marker 包裹的本插件块：整体移除（含 END 行）
+    if (line.trim() === DSH_MARKER_START) {
+      let j = i + 1;
+      while (j < lines.length && lines[j].trim() !== DSH_MARKER_END) j++;
+      i = Math.min(j + 1, lines.length);
+      continue;
+    }
+    // 顶层 insert 块：缩进内容随块收集，含 id: dsh-hook 则整块丢弃并吞掉尾随空行
+    if (/^- insert:\s*$/.test(line)) {
+      const block = [line];
+      let j = i + 1;
+      while (j < lines.length && /^\s/.test(lines[j])) { block.push(lines[j]); j++; }
+      if (block.join('\n').includes('id: dsh-hook')) {
+        while (j < lines.length && lines[j].trim() === '') j++;
+      } else {
+        out.push(...block);
+      }
+      i = j;
+      continue;
+    }
+    out.push(line);
+    i++;
+  }
+  return out.join('\n');
+}
+
+// 写入 dsh-hook 挂载（幂等）：返回 true=已写入，false=跳过（未检测到 profile 或已是最新）。
+// 显式传入 profileDir/pluginEntry 便于测试（沿用 configureCodex(codexPath) 的模式）。
+export function configureDsh({ profileDir = DSH_PROFILE_DIR, pluginEntry = dshPluginEntry() } = {}) {
+  if (!fs.existsSync(profileDir)) return false; // dsh 未初始化，跳过
+  const patchPath = path.join(profileDir, 'cordis.patch.yml');
+  let content = '';
+  try { content = fs.readFileSync(patchPath, 'utf-8'); } catch {}
+
+  // 已挂载本插件的最新相对路径 → 幂等跳过
+  const rel = toPosix(path.relative(profileDir, pluginEntry));
+  const block = dshHookBlock(rel);
+  if (content.includes(DSH_MARKER_START) && content.includes(block)) return false;
+
+  const base = stripDshHookBlocks(content).trimEnd().replace(/\n{3,}/g, '\n\n');
+  const out = (base ? base + '\n\n' : '') + block + '\n';
+  fs.mkdirSync(profileDir, { recursive: true });
+  fs.writeFileSync(patchPath, out);
+  return true;
+}
+
+// 移除 dsh-hook 挂载（uninstall）：返回 true=已改写，false=无挂载/未检测到 profile。
+export function unconfigureDsh({ profileDir = DSH_PROFILE_DIR } = {}) {
+  const patchPath = path.join(profileDir, 'cordis.patch.yml');
+  if (!fs.existsSync(patchPath)) return false;
+  const content = fs.readFileSync(patchPath, 'utf-8');
+  const stripped = stripDshHookBlocks(content).replace(/\n{3,}/g, '\n\n').trim();
+  if (stripped === content.trim()) return false; // 无 a4phone dsh-hook 挂载
+  fs.writeFileSync(patchPath, stripped ? stripped + '\n' : '');
+  return true;
+}
+
 // setup 主流程
 export async function runSetup({ generateQR }) {
   const config = loadConfig();
@@ -268,6 +360,7 @@ export async function runSetup({ generateQR }) {
 
   const claudeConfigured = registerHooks(SETTINGS_PATH, hookCommand());
   const codexConfigured = configureCodex();
+  const dshConfigured = configureDsh();
 
   const subscribeUrl = `${config.server}/${config.topic}`;
   const ntfyUrl = `ntfy://${new URL(config.server).host}/${config.topic}`;
@@ -284,7 +377,11 @@ export async function runSetup({ generateQR }) {
   process.stdout.write('\n在 ntfy App 添加订阅，输入话题名称或扫描上方二维码。\n');
   process.stdout.write(`Claude Code 配置：${claudeConfigured ? '已自动写入 ~/.claude/settings.json' : '已存在，跳过'}\n`);
   process.stdout.write(`Codex 配置：${codexConfigured ? '已自动写入 ~/.codex/config.toml' : '已存在，跳过'}\n`);
+  const dshStatus = !fs.existsSync(DSH_PROFILE_DIR)
+    ? '未检测到 DSH 环境（~/.dsh/profiles/web），跳过'
+    : dshConfigured ? '已自动写入 ~/.dsh/profiles/web/cordis.patch.yml' : '已存在，跳过';
+  process.stdout.write(`DSH 配置：${dshStatus}\n`);
   process.stdout.write('模式切换：a4p out（外出/手机优先） / a4p home（终端优先） / a4p status\n');
-  process.stdout.write('重启 Claude Code / Codex 会话后 Hook 生效。\n');
+  process.stdout.write('重启 Claude Code / Codex 会话后 Hook 生效（DSH 插件热生效，无需重启）。\n');
   return config;
 }

@@ -1,13 +1,14 @@
 # a4phone
 
-Claude Code / Codex 远程手机交互包。通过 [ntfy.sh](https://ntfy.sh) 在手机上接收任务完成通知（含 AI 最后输出），对 AI 提问与权限请求进行远程点选或文字作答，并可从手机直接继续对话。
+Claude Code / Codex / DSH（DeepSeek Harness）远程手机交互包。通过 [ntfy.sh](https://ntfy.sh) 在手机上接收任务完成通知（含 AI 最后输出），对 AI 提问与权限请求进行远程点选或文字作答，并可从手机直接继续对话。
 
 ## 功能
 
-- **任务完成通知**：`Stop` 事件 → 电脑弹窗 + 手机推送，包含 AI 最后输出的一段话
-- **AI 提问交互**：`AskUserQuestion`（Codex 为 `request_user_input`）→ 手机显示选项按钮点选，也可直接发送文字自由作答
+- **任务完成通知**：`Stop` 事件（DSH 为 `turn/end`）→ 电脑弹窗 + 手机推送，包含 AI 最后输出的一段话
+- **AI 提问交互**：`AskUserQuestion`（Codex 为 `request_user_input`，DSH 为 `ask_user_question`）→ 手机显示选项按钮点选，也可直接发送文字自由作答
 - **权限请求交互**：`PermissionRequest` → 手机 Approve/Deny/Always Approve
-- **远程续聊**：守护进程监听主话题，手机发文字即可与当前会话交流，形成完整远程对话闭环
+- **DSH 一键挂载**：`a4p setup` 自动把内置 `dsh-hook` 插件挂到 DSH web profile，让 DeepSeek Harness 同样具备手机交互
+- **远程续聊**：守护进程监听主话题，手机发文字即可与当前会话交流，形成完整远程对话闭环（Claude Code / Codex）
 - **后台守护进程**：`a4p listen` 无窗口后台运行，日志写入文件
 - **双模式**：外出模式（手机优先）/ 终端优先模式，一键切换
 - **零第三方依赖**：仅依赖 ntfy.sh 免费服务，无 Google 服务依赖
@@ -42,7 +43,8 @@ a4p help         # 显示帮助
 
 1. 生成独一无二的话题名称（如 `a4p-xxxx`），写入 `~/.a4phone/config.json`
 2. 在 `~/.claude/settings.json` 注册三个 Hook（Stop / AskUserQuestion / PermissionRequest），并同时写入 `~/.codex/config.toml` 的 Codex Hook（见下文 [Codex](#codex) 一节）
-3. 在终端显示二维码
+3. 检测到 DSH 环境时，把内置 `dsh-hook` 插件挂载到 `~/.dsh/profiles/web/cordis.patch.yml`（见下文 [DSH](#dshdeepseek-harness) 一节）
+4. 在终端显示二维码
 
 然后用手机 ntfy App 扫描二维码或输入话题名称订阅，重启 Claude Code / Codex 会话后 Hook 生效。
 
@@ -125,6 +127,23 @@ command = "a4p hook codex"
 >
 > Codex 的提问工具叫 `request_user_input`（不是 `AskUserQuestion`），PreToolUse 的 matcher 必须匹配该名称 hook 才会触发。Codex 端无法像 Claude Code 那样用 `updatedInput` 注入答案，a4phone 采用"阻断工具调用、把手机答案写进阻断原因"的方式，让模型看到答案后直接采用继续。
 
+## DSH（DeepSeek Harness）
+
+`a4p setup` 检测到 DSH 环境（`~/.dsh/profiles/web` 存在）时，会把内置的 `dsh-hook` 插件挂载到 web profile 的 `cordis.patch.yml`，让 DeepSeek Harness 同样具备手机远程交互。插件复用同一 a4phone 话题与模式，手机端无需额外订阅。
+
+| Hook | 触发事件 | 手机交互（外出模式） |
+|------|---------|---------------------|
+| 任务完成 | `turn/end` 且 `reason.kind === 'completed'` | 系统通知 + 手机推送（含 AI 最后输出） |
+| 提问 | `ask_user_question` 工具调用 | 手机点选选项 / 文字自由作答 |
+| 权限请求 | `approval/request` | 手机 Approve / Deny |
+
+- 插件位于本包 `dsh/` 目录（Cordis 插件，监听 DSH 的 `session/event`、`tools/execute`、`approval/request` 事件），`a4p setup` 以 insert 形式写入 patch，幂等可重复执行
+- 若检测到旧版手动挂载（指向 `C:\ProgramMine\dsh-hook` 的 `id: dsh-hook`），`a4p setup` 会自动替换为本包路径
+- `cordis.patch.yml` 被 DSH 热监视（`watchUserPatches`），挂载即时生效；若插件代码有更新，建议重启 `dsh web`（可参考 `restart-dsh-web.ps1` 的思路）
+- 模式切换复用同一套：`a4p out`（手机优先）/ `a4p home`（终端优先）；Hook 日志写入 `~/.a4phone/dsh-logs/`
+- 目前仅挂载到 `web` profile；`a4p uninstall` 会同时移除该挂载
+- 远程续聊（手机发文字继续 DSH 会话）暂未支持，`a4p resume` 仍只服务 Claude Code / Codex 会话
+
 ## 原理
 
 Hook（Claude Code / Codex）拦截事件后，通过 ntfy.sh 推送带按钮的通知到手机；手机点选或发送文字后，决策经响应话题回传并注入会话。`Stop` 事件同时把 AI 最后输出从会话记录中抽取出来推送手机。
@@ -153,13 +172,14 @@ AI助手触发事件 → a4p hook → ntfy.sh 推送手机 → 手机点选/文�
 - 需 Node.js 18+，手机端安装 ntfy App
 - 手机订阅后，请在**订阅设置**中开启"即时交付"，否则消息需手动刷新才能收到
 - 续聊支持 Claude Code 与 Codex 会话（按最近会话的 agent 自动选择命令）；Codex 续聊通过 `codex exec resume` 执行，需 Codex CLI 已登录、hook 已信任
+- DSH 支持任务完成通知 / 提问作答 / 权限审批（经内置 `dsh-hook` 插件），但远程续聊暂未支持
 - 续聊期间守护进程会自动临时切换为外出模式，结束后恢复原模式
 - Claude Code 会话同一时间只能被一个进程占用，`--resume` 续聊前请先结束终端里仍在运行的原会话；Codex 会话被占用时 a4phone 会自动 fork 新线程续聊（复制会话为新线程 ID，原窗口不受影响，手机对话在 fork 上继续）
 - 续聊守护进程需后台常驻：Windows 用 `a4p listen` 或计划任务，WSL/Linux 可用 tmux 或 systemd
 - **ntfy.sh 免费托管服务有发布速率/消息保留限制**：短时间高频测试可能触发 `limited` 提示，建议降低推送频率（续聊结果已去重推送，不再重复通知）
 - ntfy.sh 公共话题可被知晓话题名的人读写，重要场景建议自建 ntfy 服务或使用访问令牌
 - ntfy.sh 为国外服务，国内网络下长连接可能不稳定
-- 配置存储于 `~/.a4phone/config.json`，最近会话存储于 `~/.a4phone/last.json`，模式存储于 `~/.a4phone/mode.json`，守护进程信息存储于 `~/.a4phone/daemon.json`，日志写入 `~/.a4phone/daemon.log`
+- 配置存储于 `~/.a4phone/config.json`，最近会话存储于 `~/.a4phone/last.json`，模式存储于 `~/.a4phone/mode.json`，守护进程信息存储于 `~/.a4phone/daemon.json`，日志写入 `~/.a4phone/daemon.log`；DSH Hook 日志写入 `~/.a4phone/dsh-logs/`
 
 ## 开发
 

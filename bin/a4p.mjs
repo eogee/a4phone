@@ -22,9 +22,9 @@ const SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json');
 migrateLegacy();
 
 function showHelp() {
-  console.log('a4phone — Claude Code / Codex 远程手机交互\n');
+  console.log('a4phone — Claude Code / Codex / DSH 远程手机交互\n');
   console.log('用法:');
-  console.log('  a4p setup       安装引导（生成话题、注册 Hook、显示二维码）');
+  console.log('  a4p setup       安装引导（生成话题、注册 Hook、挂载 DSH 插件、显示二维码）');
   console.log('  a4p out         外出模式（手机优先）');
   console.log('  a4p home        终端优先模式（默认）');
   console.log('  a4p status      查看当前模式');
@@ -72,18 +72,19 @@ if (cmd === '--version' || cmd === '-v' || cmd === 'version') {
     process.stdout.write(JSON.stringify(result) + '\n');
   }
 } else if (cmd === 'uninstall') {
-  const { unregisterHooks, unconfigureCodex } = await import('../src/setup.mjs');
+  const { unregisterHooks, unconfigureCodex, unconfigureDsh } = await import('../src/setup.mjs');
   const { stopDaemon } = await import('../src/daemon.mjs');
   // 先停守护进程：Windows 上守护进程持有 daemon.log 句柄，直接删目录会失败且异常被静默吞掉
   await stopDaemon();
   unregisterHooks(SETTINGS_PATH);
   unconfigureCodex();
+  unconfigureDsh();
   // 新版 ~/.a4phone/ 目录 + 旧版家目录散点文件一并清理
   try { fs.rmSync(A4P_DIR, { recursive: true, force: true }); } catch {}
   for (const f of ['.a4phone.json', '.a4phone-mode.json', '.a4phone-last.json', '.a4phone-daemon.json', '.a4phone-daemon.log']) {
     try { fs.unlinkSync(path.join(os.homedir(), f)); } catch {}
   }
-  console.log('a4phone 已卸载：Claude Code / Codex Hook 已移除，配置已删除。');
+  console.log('a4phone 已卸载：Claude Code / Codex / DSH Hook 已移除，配置已删除。');
 } else if (cmd === 'listen') {
   const sub = process.argv[3];
   if (sub === '--stop') {
