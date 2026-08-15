@@ -1,5 +1,7 @@
 # a4phone
 
+![a4phone](https://eogee.com/static/uploads/dsh%E7%BB%AD%E8%81%8A%E6%95%88%E6%9E%9C%E7%A4%BA%E4%BE%8B.png)
+
 Claude Code / Codex / DSH（DeepSeek Harness）远程手机交互包。通过 [ntfy.sh](https://ntfy.sh) 在手机上接收任务完成通知（含 AI 最后输出），对 AI 提问与权限请求进行远程点选或文字作答，并可从手机直接继续对话。
 
 ## 功能
