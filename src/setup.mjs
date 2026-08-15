@@ -383,5 +383,22 @@ export async function runSetup({ generateQR }) {
   process.stdout.write(`DSH 配置：${dshStatus}\n`);
   process.stdout.write('模式切换：a4p out（外出/手机优先） / a4p home（终端优先） / a4p status\n');
   process.stdout.write('重启 Claude Code / Codex 会话后 Hook 生效（DSH 插件热生效，无需重启）。\n');
+
+  // 默认启动续聊守护进程 + 注册开机自启（失败不阻塞 setup，给出提示）
+  try {
+    const { startDaemon } = await import('./daemon.mjs');
+    await startDaemon();
+  } catch (error) {
+    process.stdout.write(`续聊守护进程启动失败：${String(error?.message ?? error)}\n`);
+  }
+  try {
+    const { enableAutostart } = await import('./autostart.mjs');
+    const autostart = enableAutostart();
+    process.stdout.write(autostart.ok
+      ? '开机自启：已注册（登录时自动运行续聊守护进程，可用 a4p autostart --off 关闭）\n'
+      : `开机自启：${autostart.reason}\n`);
+  } catch (error) {
+    process.stdout.write(`开机自启注册失败：${String(error?.message ?? error)}\n`);
+  }
   return config;
 }

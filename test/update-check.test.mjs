@@ -26,7 +26,8 @@ test('compareVersions：大小比较与版本号长度差异', () => {
 });
 
 test('getLocalVersion：读取当前包版本', () => {
-  assert.equal(getLocalVersion(), '1.3.0');
+  const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
+  assert.equal(getLocalVersion(), pkg.version, '应与 package.json 版本一致');
 });
 
 test('checkForUpdate：checkUpdates=false 时跳过', async () => {

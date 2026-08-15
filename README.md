@@ -11,7 +11,7 @@ Claude Code / Codex / DSH（DeepSeek Harness）远程手机交互包。通过 [n
 - **远程续聊**：守护进程监听主话题，手机发文字即可与当前会话交流，形成完整远程对话闭环（Claude Code / Codex / DSH）
 - **DSH 远程续聊**：手机发文字直接注入 DSH 正在运行的会话（`agent.followup`），手机消息与 AI 回复**实时出现在桌面端会话里**，无需另起进程、无会话锁冲突
 - **后台守护进程**：`a4p listen` 无窗口后台运行，日志写入文件
-- **自动更新提醒**：守护进程周期检查 npm 新版本并**推送手机提醒**；其他命令在终端提示（默认开启，可在配置关闭）
+- **自动更新提醒**：守护进程周期检查 npm 新版本并**推送手机提醒**；其他命令发现新版本时终端提示 + 手机推送（默认开启，可在配置关闭）
 - **双模式**：外出模式（手机优先）/ 终端优先模式，一键切换
 - **零第三方依赖**：仅依赖 ntfy.sh 免费服务，无 Google 服务依赖
 
@@ -24,13 +24,14 @@ npm install -g a4phone
 ## 使用
 
 ```bash
-a4p setup        # 安装引导：生成话题、注册 Hook、显示二维码
+a4p setup        # 安装引导：生成话题、注册 Hook、启动守护进程、注册开机自启、显示二维码
 a4p out          # 外出模式（手机优先）
 a4p home         # 终端优先模式（默认）
 a4p status       # 查看当前模式
 a4p listen       # 后台运行续聊守护进程（无窗口）
 a4p listen --stop     # 停止守护进程
 a4p listen --status   # 查看守护进程状态
+a4p autostart    # 查看开机自启状态（--on 开启 / --off 关闭）
 a4p resume       # 手动续聊最近会话：a4p resume 要追加的内容
 a4p last         # 查看最近会话记录
 a4p test         # 发送测试通知
@@ -46,9 +47,13 @@ a4p help         # 显示帮助
 1. 生成独一无二的话题名称（如 `a4p-xxxx`），写入 `~/.a4phone/config.json`
 2. 在 `~/.claude/settings.json` 注册三个 Hook（Stop / AskUserQuestion / PermissionRequest），并同时写入 `~/.codex/config.toml` 的 Codex Hook（见下文 [Codex](#codex) 一节）
 3. 检测到 DSH 环境时，把内置 `dsh-hook` 插件挂载到 `~/.dsh/profiles/web/cordis.patch.yml`（见下文 [DSH](#dshdeepseek-harness) 一节）
-4. 在终端显示二维码
+4. **默认启动续聊守护进程**（`a4p listen` 后台运行）
+5. **默认注册开机自启**（Windows 启动文件夹写入隐藏 VBS，登录时自动运行守护进程）
+6. 在终端显示二维码
 
 然后用手机 ntfy App 扫描二维码或输入话题名称订阅，重启 Claude Code / Codex 会话后 Hook 生效。
+
+> 开机自启无需管理员权限（当前用户启动文件夹），可用 `a4p autostart --off` 关闭、`--on` 重新开启；`a4p uninstall` 会一并移除。WSL/Linux 暂不支持自动注册，可手动用 tmux / systemd 常驻。
 
 ### 模式切换
 
@@ -194,11 +199,11 @@ AI助手触发事件 → a4p hook → ntfy.sh 推送手机 → 手机点选/文�
 - DSH 支持任务完成通知 / 提问作答 / 权限审批 / 远程续聊（经内置 `dsh-hook` 插件）
 - 续聊期间守护进程会自动临时切换为外出模式，结束后恢复原模式
 - Claude Code 会话同一时间只能被一个进程占用，`--resume` 续聊前请先结束终端里仍在运行的原会话；Codex 会话被占用时 a4phone 会自动 fork 新线程续聊（复制会话为新线程 ID，原窗口不受影响，手机对话在 fork 上继续）
-- 续聊守护进程需后台常驻：Windows 用 `a4p listen` 或计划任务，WSL/Linux 可用 tmux 或 systemd
+- 续聊守护进程默认随 `a4p setup` 启动并注册**开机自启**（Windows 登录时自动运行）；也可手动 `a4p listen`，WSL/Linux 可用 tmux 或 systemd
 - **ntfy.sh 免费托管服务有发布速率/消息保留限制**：短时间高频测试可能触发 `limited` 提示，建议降低推送频率（续聊结果已去重推送，不再重复通知）
 - ntfy.sh 公共话题可被知晓话题名的人读写，重要场景建议自建 ntfy 服务或使用访问令牌
 - ntfy.sh 为国外服务，国内网络下长连接可能不稳定
-- **自动更新提醒**：默认开启（`checkUpdates: true`）。守护进程（`a4p listen`）启动时及每 `updateIntervalHours` 小时（默认 6）检查一次 npm registry（npmmirror 优先、官方兜底），发现新版本推送手机提醒；其他命令（`a4p status`/`a4p resume` 等）在终端提示。同一新版本只提醒一次，查询失败静默跳过，不影响正常功能；可在 `~/.a4phone/config.json` 设 `checkUpdates: false` 关闭
+- **自动更新提醒**：默认开启（`checkUpdates: true`）。守护进程（`a4p listen`）启动时及每 `updateIntervalHours` 小时（默认 6）检查一次 npm registry（npmmirror 优先、官方兜底），发现新版本**推送手机提醒**；其他命令（`a4p status`/`a4p resume` 等）发现新版本时**终端提示 + 手机推送**（与守护进程共用去重缓存，同一版本只提醒一次）。查询失败静默跳过，不影响正常功能；可在 `~/.a4phone/config.json` 设 `checkUpdates: false` 关闭
 - 配置存储于 `~/.a4phone/config.json`，最近会话存储于 `~/.a4phone/last.json`，模式存储于 `~/.a4phone/mode.json`，守护进程信息存储于 `~/.a4phone/daemon.json`，日志写入 `~/.a4phone/daemon.log`；DSH Hook 日志写入 `~/.a4phone/dsh-logs/`，DSH 续聊队列位于 `~/.a4phone/dsh-jobs/`，心跳位于 `~/.a4phone/dsh-heartbeat.json`，更新检查缓存位于 `~/.a4phone/update-cache.json`
 
 ## 开发
