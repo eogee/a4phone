@@ -23,6 +23,8 @@ export const DSH_HEARTBEAT = path.join(A4P_DIR, 'dsh-heartbeat.json');
 // 续聊积压批次持久化：长轮次期间到达的消息写入该文件，守护进程重启后恢复，
 // 避免积压消息在重启时丢失
 export const PENDING_PATH = path.join(A4P_DIR, 'pending-batch.json');
+// 版本更新检查缓存：{ lastCheck, knownLatest }，用于限频与"同一新版本只提醒一次"
+export const UPDATE_CACHE_PATH = path.join(A4P_DIR, 'update-cache.json');
 
 // 旧版散落在家目录的单文件 → 迁移到 ~/.a4phone/（新路径不存在时才移动）
 const LEGACY_PATHS = {

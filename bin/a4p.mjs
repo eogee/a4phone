@@ -40,6 +40,21 @@ function showHelp() {
 }
 
 const cmd = process.argv[2];
+const sub = process.argv[3];
+
+// ── 版本更新检查（默认开启）───────────────────────────────────────────
+// 守护进程（listen --daemon-child）自己有周期检查 + 手机推送，这里跳过；
+// hook 是 AI 每次事件都调用的热路径，跳过避免延迟；version/help 是脚本/查询场景跳过。
+// 其余命令在终端提示新版本；限频与去重由 update-check 缓存保证（未到期零开销）。
+if (cmd && !['hook', '--version', '-v', 'version', 'help', '--help', '-h'].includes(cmd)
+    && !(cmd === 'listen' && sub === '--daemon-child')) {
+  const { checkForUpdate, makeConsoleNotifier } = await import('../src/update-check.mjs');
+  const { loadConfig } = await import('../src/config.mjs');
+  checkForUpdate({
+    config: loadConfig(),
+    notify: makeConsoleNotifier(),
+  }).catch(() => {});
+}
 
 if (cmd === '--version' || cmd === '-v' || cmd === 'version') {
   const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));

@@ -11,6 +11,7 @@ Claude Code / Codex / DSH（DeepSeek Harness）远程手机交互包。通过 [n
 - **远程续聊**：守护进程监听主话题，手机发文字即可与当前会话交流，形成完整远程对话闭环（Claude Code / Codex / DSH）
 - **DSH 远程续聊**：手机发文字直接注入 DSH 正在运行的会话（`agent.followup`），手机消息与 AI 回复**实时出现在桌面端会话里**，无需另起进程、无会话锁冲突
 - **后台守护进程**：`a4p listen` 无窗口后台运行，日志写入文件
+- **自动更新提醒**：守护进程周期检查 npm 新版本并**推送手机提醒**；其他命令在终端提示（默认开启，可在配置关闭）
 - **双模式**：外出模式（手机优先）/ 终端优先模式，一键切换
 - **零第三方依赖**：仅依赖 ntfy.sh 免费服务，无 Google 服务依赖
 
@@ -197,7 +198,8 @@ AI助手触发事件 → a4p hook → ntfy.sh 推送手机 → 手机点选/文�
 - **ntfy.sh 免费托管服务有发布速率/消息保留限制**：短时间高频测试可能触发 `limited` 提示，建议降低推送频率（续聊结果已去重推送，不再重复通知）
 - ntfy.sh 公共话题可被知晓话题名的人读写，重要场景建议自建 ntfy 服务或使用访问令牌
 - ntfy.sh 为国外服务，国内网络下长连接可能不稳定
-- 配置存储于 `~/.a4phone/config.json`，最近会话存储于 `~/.a4phone/last.json`，模式存储于 `~/.a4phone/mode.json`，守护进程信息存储于 `~/.a4phone/daemon.json`，日志写入 `~/.a4phone/daemon.log`；DSH Hook 日志写入 `~/.a4phone/dsh-logs/`，DSH 续聊队列位于 `~/.a4phone/dsh-jobs/`，心跳位于 `~/.a4phone/dsh-heartbeat.json`
+- **自动更新提醒**：默认开启（`checkUpdates: true`）。守护进程（`a4p listen`）启动时及每 `updateIntervalHours` 小时（默认 6）检查一次 npm registry（npmmirror 优先、官方兜底），发现新版本推送手机提醒；其他命令（`a4p status`/`a4p resume` 等）在终端提示。同一新版本只提醒一次，查询失败静默跳过，不影响正常功能；可在 `~/.a4phone/config.json` 设 `checkUpdates: false` 关闭
+- 配置存储于 `~/.a4phone/config.json`，最近会话存储于 `~/.a4phone/last.json`，模式存储于 `~/.a4phone/mode.json`，守护进程信息存储于 `~/.a4phone/daemon.json`，日志写入 `~/.a4phone/daemon.log`；DSH Hook 日志写入 `~/.a4phone/dsh-logs/`，DSH 续聊队列位于 `~/.a4phone/dsh-jobs/`，心跳位于 `~/.a4phone/dsh-heartbeat.json`，更新检查缓存位于 `~/.a4phone/update-cache.json`
 
 ## 开发
 

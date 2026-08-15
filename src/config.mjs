@@ -15,9 +15,11 @@ export function loadConfig() {
       timeout: cfg.timeout ?? 60,
       planTimeout: cfg.planTimeout ?? 300,
       resumeTimeout: cfg.resumeTimeout ?? 1800, // 续聊超时（秒），默认 30 分钟
+      checkUpdates: cfg.checkUpdates ?? true, // 版本更新检查（守护进程推手机 / 命令终端提示）
+      updateIntervalHours: cfg.updateIntervalHours ?? 6, // 检查间隔（小时）
     };
   } catch {
-    return { topic: '', server: 'https://ntfy.sh', timeout: 60, planTimeout: 300, resumeTimeout: 1800 };
+    return { topic: '', server: 'https://ntfy.sh', timeout: 60, planTimeout: 300, resumeTimeout: 1800, checkUpdates: true, updateIntervalHours: 6 };
   }
 }
 

@@ -11,6 +11,7 @@ import path from 'path';
 import { loadConfig, loadLastSession } from './config.mjs';
 import { runResume } from './resume.mjs';
 import { createBatcher } from './batcher.mjs';
+import { checkForUpdate, makePhoneNotifier } from './update-check.mjs';
 import { PENDING_PATH, ensureDir } from './paths.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -104,6 +105,21 @@ export async function runListen({ onLog = (s) => console.log(s) } = {}) {
       batcher.restore(saved.texts, saved.msgTime ?? null);
     }
   } catch {}
+
+  // ── 版本更新检查：启动时 + 周期性（默认 6 小时），发现新版本推送手机提醒 ──
+  // 限频与去重由 update-check 的缓存保证（同一新版本只提醒一次，未到期不访问网络）
+  const checkUpdate = async () => {
+    try {
+      await checkForUpdate({
+        config,
+        notify: makePhoneNotifier(config, { onLog }),
+        onLog,
+      });
+    } catch {}
+  };
+  await checkUpdate();
+  const intervalMs = (config.updateIntervalHours ?? 6) * 3600 * 1000;
+  setInterval(() => { checkUpdate().catch(() => {}); }, intervalMs).unref();
 
   while (true) {
     try {
