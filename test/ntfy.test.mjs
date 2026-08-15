@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'http';
-import { waitForResponse } from '../src/ntfy.mjs';
+import { waitForResponse, parseNtfyMessage } from '../src/ntfy.mjs';
 
 // 启动一个逐行发送 NDJSON 的本地流
 function startServer(lines, { interval = 30, endAfter = true } = {}) {
@@ -51,6 +51,51 @@ test('手机自由文本（非 JSON）作为答案返回', async () => {
   } finally {
     server.close();
   }
+});
+
+test('多选项数字回复：纯数字"4"是合法 JSON，必须按自由文本接受（回归：编号回复失效 bug）', async () => {
+  const { server, port } = await startServer([
+    '{"event":"open","topic":"a4p-test-response"}',
+    '{"event":"message","topic":"a4p-test-response","message":"4"}',
+  ]);
+  try {
+    const resp = await waitForResponse({ ...base(server, port), requestId: 'req-1' });
+    assert.deepEqual(resp, { answer: '4' }, '数字自由文本应原样作为答案返回');
+  } finally {
+    server.close();
+  }
+});
+
+test('数字回复映射回选项 label（与 asku.mjs 相同逻辑）', () => {
+  const options = ['爬山', '看电影', '宅家', '去公园散步'];
+  const answer = '4';
+  const idx = Number(String(answer).trim());
+  assert.equal(idx, 4);
+  assert.ok(Number.isInteger(idx) && idx >= 1 && idx <= options.length);
+  assert.equal(options[idx - 1], '去公园散步');
+});
+
+test('布尔/其他 JSON 原始值自由文本按文本接受', async () => {
+  const { server, port } = await startServer([
+    '{"event":"open","topic":"a4p-test-response"}',
+    '{"event":"message","topic":"a4p-test-response","message":"true"}',
+  ]);
+  try {
+    const resp = await waitForResponse({ ...base(server, port), requestId: 'req-1' });
+    assert.deepEqual(resp, { answer: 'true' });
+  } finally {
+    server.close();
+  }
+});
+
+test('parseNtfyMessage：JSON 对象返回对象，原始值/文本原样返回', () => {
+  assert.deepEqual(parseNtfyMessage('{"requestId":"x","answer":"y"}'), { requestId: 'x', answer: 'y' });
+  assert.equal(parseNtfyMessage('4'), '4', '数字字面量按文本');
+  assert.equal(parseNtfyMessage('true'), 'true', '布尔字面量按文本');
+  assert.equal(parseNtfyMessage('null'), 'null', 'null 字面量按文本');
+  assert.equal(parseNtfyMessage('明天下午三点'), '明天下午三点', '普通文本原样');
+  assert.equal(parseNtfyMessage('03'), '03', '前导零数字原样（非法 JSON）');
+  assert.equal(parseNtfyMessage(''), '');
 });
 
 test('requestId 不匹配的回执不会被接受', async () => {

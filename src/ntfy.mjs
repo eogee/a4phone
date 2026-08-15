@@ -1,4 +1,23 @@
 // ntfy.sh 推送与响应订阅
+
+/**
+ * 解析 ntfy 消息体：
+ *   - JSON 对象（如按钮回执 { requestId, answer }）→ 原样返回对象
+ *   - JSON 原始值（"4" / "true" / "null" 等合法 JSON 字面量）→ 按文本返回
+ *     （修复：JSON.parse('4') 会返回数字 4，导致纯数字自由文本被误判为 JSON 对象而丢失）
+ *   - 非 JSON 文本 → 原样返回
+ * @param {string} raw ntfy 事件的 message 字段
+ * @returns {object|string}
+ */
+export function parseNtfyMessage(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed !== null && typeof parsed === 'object' ? parsed : raw;
+  } catch {
+    return raw;
+  }
+}
+
 export async function sendNotification({ server, topic, title, message, actions }) {
   try {
     const res = await fetch(server, {
@@ -37,12 +56,8 @@ export async function waitForResponse({ server, topic, requestId, timeout }) {
           // ntfy /json 连接建立后会先发 open 事件、之后周期发 keepalive，
           // 这些事件没有 message 字段，跳过以免被误判为“手机自由文本”立即返回。
           if (event.event !== 'message' || event.message == null) continue;
-          let msg;
-          try {
-            msg = JSON.parse(event.message);
-          } catch {
-            msg = { answer: event.message }; // 纯文本：手机自由作答
-          }
+          const parsed = parseNtfyMessage(event.message);
+          const msg = typeof parsed === 'object' ? parsed : { answer: parsed };
           // action 回执：requestId 必须匹配；自由文本：无 requestId 且有 answer 才接受
           if (msg.requestId === requestId || (msg.requestId === undefined && msg.answer)) {
             clearTimeout(timer);

@@ -12,6 +12,7 @@ import { loadConfig, loadLastSession } from './config.mjs';
 import { runResume } from './resume.mjs';
 import { createBatcher } from './batcher.mjs';
 import { checkForUpdate, makePhoneNotifier } from './update-check.mjs';
+import { parseNtfyMessage } from './ntfy.mjs';
 import { PENDING_PATH, ensureDir } from './paths.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -150,12 +151,8 @@ export async function runListen({ onLog = (s) => console.log(s) } = {}) {
           if (event.time) lastTime = Math.max(lastTime, Number(event.time));
           // 有 title 的是系统推送通知（Claude Code 回复），不是手机用户消息，跳过
           if (event.title) continue;
-          let msg;
-          try {
-            msg = JSON.parse(event.message); // 系统推送为 JSON，忽略
-          } catch {
-            msg = event.message; // 纯文本：手机发来的续聊内容
-          }
+          // 系统推送为 JSON 对象则忽略；纯文本/JSON 原始值（如手机发的单数字"3"）作为续聊内容
+          const msg = parseNtfyMessage(event.message);
           if (typeof msg === 'string' && msg.trim()) {
             batcher.submit(msg.trim(), event.time ? Number(event.time) : null);
             persistSnapshot();
