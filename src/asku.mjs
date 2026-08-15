@@ -61,6 +61,8 @@ export async function handleAskUserQuestion(input, agentName, agent = 'claude') 
         ? `（也可直接向话题 ${config.topic}-response 发送文字作答）`
         : `（选项较多，请回复编号如「3」，或直接向话题 ${config.topic}-response 发送文字作答）`
     );
+    // 浏览器兜底：未订阅响应话题的用户可打开网页版直接回复（自由作答/编号回复都需要）
+    lines.push(`（如未订阅响应话题，可浏览器打开 ${config.server}/${config.topic}-response 直接回复）`);
     const sent = await sendNotification({
       ...config,
       title: `${agentName}: ${q.header || 'Question'}`,

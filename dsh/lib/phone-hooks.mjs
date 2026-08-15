@@ -106,6 +106,8 @@ export async function handleAskUserQuestion(exec) {
         ? `（也可直接向话题 ${cfg.topic}-response 发送文字作答）`
         : `（选项较多，请回复编号如「3」，或直接向话题 ${cfg.topic}-response 发送文字作答）`
     );
+    // 浏览器兜底：未订阅响应话题的用户可打开网页版直接回复（自由作答/编号回复都需要）
+    lines.push(`（如未订阅响应话题，可浏览器打开 ${cfg.server}/${cfg.topic}-response 直接回复）`);
     if (!useActions && options.length > 3) {
       process.stderr.write(`[dsh-hook] 选项 ${options.length} 个超 ntfy 按钮上限(3)，已降级为文字作答\n`);
     }

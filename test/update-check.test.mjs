@@ -46,7 +46,8 @@ test('checkForUpdate：checkUpdates=false 时跳过', async () => {
 
 test('checkForUpdate：未到期（限频）时跳过且不访问网络', async () => {
   const cachePath = tmpCache();
-  fs.writeFileSync(cachePath, JSON.stringify({ lastCheck: Date.now(), knownLatest: null }));
+  // 缓存含 version（与本机一致）→ 版本未变 → 限频生效
+  fs.writeFileSync(cachePath, JSON.stringify({ lastCheck: Date.now(), knownLatest: null, version: '1.0.0' }));
   const out = await checkForUpdate({
     config: {},
     cachePath,
@@ -56,6 +57,27 @@ test('checkForUpdate：未到期（限频）时跳过且不访问网络', async 
   });
   assert.equal(out.checked, false, '间隔内不应检查');
   assert.equal(out.latest, null);
+  fs.rmSync(path.dirname(cachePath), { recursive: true, force: true });
+});
+
+test('checkForUpdate：本地版本升级后忽略限频（立即检查）', async () => {
+  const cachePath = tmpCache();
+  // 旧版本时代的 lastCheck（刚刚），本地已升级到 1.4.1 → 应忽略限频直接检查
+  fs.writeFileSync(cachePath, JSON.stringify({ lastCheck: Date.now(), knownLatest: null, version: '1.0.0' }));
+  const notified = [];
+  const out = await checkForUpdate({
+    config: {},
+    cachePath,
+    now: Date.now(),
+    latestVersion: '9.9.9',
+    localVersion: '1.4.1',
+    notify: async (latest) => { notified.push(latest); },
+  });
+  assert.equal(out.checked, true, '版本升级后不应被旧 lastCheck 限频');
+  assert.equal(out.hasUpdate, true);
+  assert.deepEqual(notified, ['9.9.9']);
+  const cache = loadCache(cachePath);
+  assert.equal(cache.version, '1.4.1', '缓存应记录新版本');
   fs.rmSync(path.dirname(cachePath), { recursive: true, force: true });
 });
 
@@ -92,7 +114,7 @@ test('checkForUpdate：发现新版本 → 提醒一次并缓存 knownLatest', a
   assert.equal(first.hasUpdate, true);
   assert.equal(first.notified, true);
   assert.deepEqual(notified, ['1.2.0'], '应提醒一次');
-  assert.deepEqual(loadCache(cachePath), { lastCheck: now, knownLatest: '1.2.0' });
+  assert.deepEqual(loadCache(cachePath), { lastCheck: now, knownLatest: '1.2.0', version: '1.0.0' });
 
   // 再次检查（间隔外）：同一新版本不再提醒
   const second = await checkForUpdate({

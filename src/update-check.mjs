@@ -119,7 +119,10 @@ export async function checkForUpdate({
 
   const cache = loadCache(cachePath);
   const intervalMs = minIntervalMs ?? (cfg.updateIntervalHours ?? DEFAULT_INTERVAL_HOURS) * 3600 * 1000;
-  if (now - (cache.lastCheck || 0) < intervalMs) {
+  // 本地版本升级后忽略限频：旧版本时代的 lastCheck 不应推迟新版本的首次检查
+  // （否则用户升级后要等一整个间隔才能收到新版本提醒）
+  const versionChanged = cache.version !== localVersion;
+  if (!versionChanged && now - (cache.lastCheck || 0) < intervalMs) {
     // 未到期：限频跳过（不访问网络）
     return { checked: false, hasUpdate: false, local: localVersion, latest: cache.knownLatest || null, notified: false };
   }
@@ -139,12 +142,12 @@ export async function checkForUpdate({
     } catch (error) {
       onLog(`更新提醒发送失败（将在下次检查重试）: ${String(error?.message ?? error)}`);
       // 提醒失败：不更新 knownLatest，下次检查会重试；只记录检查时间
-      saveCache({ lastCheck: now, knownLatest: cache.knownLatest }, cachePath);
+      saveCache({ lastCheck: now, knownLatest: cache.knownLatest, version: localVersion }, cachePath);
       return { checked: true, hasUpdate, local: localVersion, latest, notified: false };
     }
   }
 
-  saveCache({ lastCheck: now, knownLatest: hasUpdate ? latest : cache.knownLatest }, cachePath);
+  saveCache({ lastCheck: now, knownLatest: hasUpdate ? latest : cache.knownLatest, version: localVersion }, cachePath);
   return { checked: true, hasUpdate, local: localVersion, latest, notified: isNewVersion };
 }
 
