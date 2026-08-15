@@ -20,18 +20,21 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { A4P_DIR } from '../../src/paths.mjs';
+import { saveLastSession } from '../../src/config.mjs';
 import {
   handleTaskComplete,
   handleAskUserQuestion,
   handleApprovalRequest,
   rememberAssistantOutput,
 } from './phone-hooks.mjs';
+import { startResumeService, isResumeInflight } from './resume-service.mjs';
 
 const name = 'dsh-hook';
 
 // 监听 tools/execute 与 approval/request 需要注入这两个服务；
 // session/event 直接 ctx.on 即可（与 dsh-session-telemetry 一致）。
-const inject = ['tools', 'approval'];
+// agents 供续聊服务解析目标会话（ctx.agents.get / roots）。
+const inject = ['tools', 'approval', 'agents'];
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -78,6 +81,8 @@ function apply(ctx, config = {}) {
   const enableQuestionAsked = config.questionAsked !== false;
   // phone: false 可整体关闭手机交互（保留日志记录），默认开启
   const phoneEnabled = config.phone !== false;
+  // resume: false 可关闭 DSH 会话续聊服务（默认开启）
+  const enableResume = config.resume !== false;
 
   // ── 会话事件流：任务完成 + 问题询问日志 + AI 最后输出缓存 ─────────────
   ctx.on('session/event', (session, event) => {
@@ -90,16 +95,28 @@ function apply(ctx, config = {}) {
     }
 
     // Hook 1: 任务完成
-    if (enableTaskComplete && type === 'turn/end' && data?.reason?.kind === 'completed') {
-      record(ctx, logDir, 'task-complete', {
-        sessionId: session.id,
-        turn: data.turn,
-        reasonKind: data.reason.kind,
-      });
-      if (phoneEnabled) {
-        handleTaskComplete(session.id, { turn: data.turn }).catch((error) =>
-          ctx.logger.warn(`dsh-hook: 任务完成推送失败: ${String(error)}`)
-        );
+    if (type === 'turn/end' && data?.reason?.kind === 'completed') {
+      // 记录最近会话（仅顶层会话，不含 subagent），供续聊（a4p resume / a4p listen）使用
+      if (enableResume && !session.header?.parentSession) {
+        saveLastSession({
+          session_id: session.id,
+          cwd: session.header?.cwd || '未知目录',
+          agent: 'DSH',
+          turn: data.turn,
+        });
+      }
+      if (enableTaskComplete) {
+        record(ctx, logDir, 'task-complete', {
+          sessionId: session.id,
+          turn: data.turn,
+          reasonKind: data.reason.kind,
+        });
+        // 续聊轮次的完成已由 a4p 推回手机（含回复文本），此处跳过重复推送
+        if (phoneEnabled && !isResumeInflight(session.id)) {
+          handleTaskComplete(session.id, { turn: data.turn }).catch((error) =>
+            ctx.logger.warn(`dsh-hook: 任务完成推送失败: ${String(error)}`)
+          );
+        }
       }
     }
 
@@ -177,7 +194,17 @@ function apply(ctx, config = {}) {
     });
   }
 
-  ctx.logger.info('dsh-hook: 已挂载三个 hook（task-complete / permission-request / question-asked）');
+  // ── 远程续聊服务：手机消息（经 a4p 写入文件队列）→ followup 注入会话 ─────
+  // 与桌面端共享同一个 live 会话：手机文字会以 user/message 出现在桌面会话中，
+  // AI 回复同样写入会话（桌面实时可见），并经 a4p 推回手机。
+  const stopResume = enableResume ? startResumeService(ctx) : () => {};
+
+  ctx.logger.info('dsh-hook: 已挂载三个 hook（task-complete / permission-request / question-asked）与续聊服务');
+
+  // 返回卸载函数：插件卸载（HMR / dsh web 退出）时停止轮询
+  return () => {
+    stopResume();
+  };
 }
 
 export { apply, inject, name };

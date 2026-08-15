@@ -15,6 +15,12 @@ export const LAST_PATH = path.join(A4P_DIR, 'last.json');
 export const DAEMON_JSON = path.join(A4P_DIR, 'daemon.json');
 export const LOG_PATH = path.join(A4P_DIR, 'daemon.log');
 
+// DSH 续聊文件队列：a4p（守护进程/manual resume）写 req-<id>.json，
+// dsh web 进程内的插件处理后写 resp-<id>.json 并删除请求文件。
+export const DSH_JOB_DIR = path.join(A4P_DIR, 'dsh-jobs');
+// DSH 插件心跳：dsh web 每次轮询刷新，a4p 据此判断 dsh web 是否在运行
+export const DSH_HEARTBEAT = path.join(A4P_DIR, 'dsh-heartbeat.json');
+
 // 旧版散落在家目录的单文件 → 迁移到 ~/.a4phone/（新路径不存在时才移动）
 const LEGACY_PATHS = {
   [CONFIG_PATH]: path.join(os.homedir(), '.a4phone.json'),

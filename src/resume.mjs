@@ -1,6 +1,8 @@
 // 续聊：把手机发来的文本作为下一条用户消息，续聊当前会话并回推回复
 //   Claude Code：claude --resume <id> --continue -p（headless，stdin 作为消息、stdout 捕获回复）
 //   Codex：codex exec resume <id> -o <文件> -（headless，stdin 作为消息、-o 把最后一条回复写入文件）
+//   DSH：经 ~/.a4phone/dsh-jobs 文件队列交给 dsh web 进程内的 dsh-hook 插件，
+//        插件直接 followup 到当前 live 会话（手机消息与回复实时出现在桌面会话里）
 //   若 Codex 会话被窗口占用（thread-store conflict），自动 fork 成新线程续聊，无需关闭原窗口
 import fs from 'fs';
 import path from 'path';
@@ -177,6 +179,22 @@ export async function runResume(text, { config = null, onLog = (s) => {} } = {})
   const last = loadLastSession();
   if (!last?.session_id) return { ok: false, reason: '暂无最近会话，请先完成一次任务触发 Stop 事件。' };
   const agent = last.agent || 'Claude Code';
+
+  // DSH 续聊：不另起进程，而是把消息交给 dsh web 进程内的插件，
+  // 直接 followup 到当前 live 会话（手机消息与回复都实时出现在桌面会话里）。
+  if (agent === 'DSH') {
+    const { runDshResume } = await import('./dsh-resume.mjs');
+    // 续聊期间锁定外出模式（人在手机端），结束后恢复原模式
+    const prevMode = readMode();
+    const lockedOut = prevMode !== 'out';
+    if (lockedOut) setMode('out');
+    try {
+      return await runDshResume(text, { config, onLog });
+    } finally {
+      if (lockedOut) setMode(prevMode);
+    }
+  }
+
   if (agent !== 'Claude Code' && agent !== 'Codex') {
     return { ok: false, reason: `续聊暂不支持 ${agent} 会话。` };
   }

@@ -1,6 +1,6 @@
 {
   "name": "a4phone-dsh-hook",
-  "description": "a4phone DSH hook plugin: task-complete, permission-request, and question-asked hooks (mounted into DeepSeek Harness via a4p setup)",
+  "description": "a4phone DSH plugin: task-complete, permission-request, and question-asked hooks plus remote resume service (mounted into DeepSeek Harness via a4p setup)",
   "version": "1.0.0",
   "type": "module",
   "main": "lib/index.js",
@@ -16,8 +16,8 @@
   },
   "@deepseek-ai/cordis": {
     "description": {
-      "en": "Hook: task-complete / permission-request / question-asked",
-      "zh": "Hook：任务完成 / 权限请求 / 问题询问"
+      "en": "Hooks: task-complete / permission-request / question-asked + remote resume",
+      "zh": "Hook：任务完成 / 权限请求 / 问题询问 + 远程续聊"
     }
   }
 }
