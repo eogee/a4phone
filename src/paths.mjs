@@ -20,6 +20,9 @@ export const LOG_PATH = path.join(A4P_DIR, 'daemon.log');
 export const DSH_JOB_DIR = path.join(A4P_DIR, 'dsh-jobs');
 // DSH 插件心跳：dsh web 每次轮询刷新，a4p 据此判断 dsh web 是否在运行
 export const DSH_HEARTBEAT = path.join(A4P_DIR, 'dsh-heartbeat.json');
+// 续聊积压批次持久化：长轮次期间到达的消息写入该文件，守护进程重启后恢复，
+// 避免积压消息在重启时丢失
+export const PENDING_PATH = path.join(A4P_DIR, 'pending-batch.json');
 
 // 旧版散落在家目录的单文件 → 迁移到 ~/.a4phone/（新路径不存在时才移动）
 const LEGACY_PATHS = {

@@ -1,12 +1,17 @@
 // 续聊守护进程：订阅主话题，手机向主话题发送文字即触发一次续聊。
 //   断线自动重连（since 从上次消息之后继续），续聊请求串行处理（避免并发会话冲突）。
+//   积压合并：一轮续聊最长 resumeTimeout（默认 1800 秒），忙时到达的手机消息
+//   合并为一个批次，当前轮结束后一次续聊处理整批（任意数量积压最多只多一轮），
+//   保证手机内容一定能送达 AI；批次持久化到 ~/.a4phone/pending-batch.json，
+//   守护进程重启后自动恢复，避免积压消息丢失。
 //   按消息时间戳过滤：如果新会话开启时间晚于用户的消息时间，则跳过该消息，
 //   避免旧消息被注入到新会话中。
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
 import { loadConfig, loadLastSession } from './config.mjs';
 import { runResume } from './resume.mjs';
+import { createBatcher } from './batcher.mjs';
+import { PENDING_PATH, ensureDir } from './paths.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const RETRY_DELAY = 5000;
@@ -17,6 +22,13 @@ export function createLogWriter(logPath) {
     const line = `[${new Date().toISOString()}] ${msg}\n`;
     stream.write(line);
   };
+}
+
+// 原子写 JSON（临时文件 + rename，避免读者读到半个文件）
+function atomicWriteJson(filePath, data) {
+  const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(data));
+  fs.renameSync(tmp, filePath);
 }
 
 export async function runListen({ onLog = (s) => console.log(s) } = {}) {
@@ -31,8 +43,6 @@ export async function runListen({ onLog = (s) => console.log(s) } = {}) {
 
   // ntfy 的 since 参数只接受 Unix 秒时间戳/时长/all，不接受 "now" 或消息 ID
   let lastTime = Math.floor(Date.now() / 1000); // 首次只收连接之后的新消息
-  let busy = false;
-  const queue = [];
   let knownSessionId = null; // 记录已处理过的会话 ID，用于检测会话切换
 
   // 判断消息是否仍应被处理：如果新会话在消息发送之后才创建，则丢弃
@@ -52,24 +62,48 @@ export async function runListen({ onLog = (s) => console.log(s) } = {}) {
     return false;
   }
 
-  const processMessage = async (text, msgTime) => {
-    if (busy) {
-      queue.push({ text, msgTime });
-      return;
+  // 批次持久化：积压非空写文件，排空后删除（守护进程重启后恢复）
+  function persistSnapshot() {
+    try {
+      ensureDir();
+      const snapshot = batcher.pendingSnapshot();
+      if (snapshot.texts.length) {
+        atomicWriteJson(PENDING_PATH, snapshot);
+      } else {
+        try { fs.unlinkSync(PENDING_PATH); } catch {}
+      }
+    } catch {}
+  }
+
+  const batcher = createBatcher({
+    log: onLog,
+    run: async ({ text, count, msgTime }) => {
+      try {
+        if (msgTime != null && isMessageStale(msgTime)) return false; // 旧消息，丢弃
+        if (count > 1) onLog(`合并 ${count} 条积压消息为一条续聊请求`);
+        onLog(`收到续聊请求：${text.slice(0, 60)}`);
+        const result = await runResume(text, { config, onLog });
+        onLog(result.ok
+          ? `消息已处理（resume 续聊${result.code != null ? `，退出码 ${result.code}` : ''}），结果已推送手机。`
+          : `续聊失败：${result.reason}`);
+        return true;
+      } finally {
+        // 批次处理完成（或已丢弃）后刷新持久化：
+        // 期间若有新积压则保留到文件，否则清空，避免重启后重复处理已完成批次
+        persistSnapshot();
+      }
+    },
+  });
+
+  // 启动恢复：上次未处理完的积压批次（守护进程重启/崩溃不丢消息）
+  try {
+    const raw = fs.readFileSync(PENDING_PATH, 'utf-8');
+    const saved = JSON.parse(raw);
+    if (Array.isArray(saved?.texts) && saved.texts.length) {
+      onLog(`恢复 ${saved.texts.length} 条重启前未处理的续聊消息，继续处理...`);
+      batcher.restore(saved.texts, saved.msgTime ?? null);
     }
-    if (msgTime != null && isMessageStale(msgTime)) return; // 旧消息，丢弃
-    busy = true;
-    onLog(`收到续聊请求：${text.slice(0, 60)}`);
-    const result = await runResume(text, { config, onLog });
-    onLog(result.ok
-      ? `消息已处理（resume 续聊${result.code != null ? `，退出码 ${result.code}` : ''}），结果已推送手机。`
-      : `续聊失败：${result.reason}`);
-    busy = false;
-    if (queue.length) {
-      const next = queue.shift();
-      processMessage(next.text, next.msgTime);
-    }
-  };
+  } catch {}
 
   while (true) {
     try {
@@ -107,7 +141,8 @@ export async function runListen({ onLog = (s) => console.log(s) } = {}) {
             msg = event.message; // 纯文本：手机发来的续聊内容
           }
           if (typeof msg === 'string' && msg.trim()) {
-            processMessage(msg.trim(), event.time ? Number(event.time) : null);
+            batcher.submit(msg.trim(), event.time ? Number(event.time) : null);
+            persistSnapshot();
           }
         }
       }
