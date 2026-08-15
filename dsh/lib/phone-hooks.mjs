@@ -85,33 +85,55 @@ export async function handleAskUserQuestion(exec) {
   for (const q of questions) {
     const options = Array.isArray(q.options) ? q.options : [];
     const requestId = crypto.randomUUID();
-    const actions = options.map((o) => ({
-      action: 'http',
-      label: o.label,
-      url: `${cfg.server}/${cfg.topic}-response`,
-      method: 'POST',
-      clear: false,
-      body: JSON.stringify({ requestId, answer: o.label }),
-    }));
+    // ntfy 最多允许 3 个 action 按钮（超过返回 HTTP 400，推送失败）。
+    // 选项 ≤3 → 按钮点选；>3 → 降级为文本编号列表 + 文字作答（waitForResponse 支持自由文本）。
+    const useActions = options.length > 0 && options.length <= 3;
+    const actions = useActions
+      ? options.map((o) => ({
+          action: 'http',
+          label: o.label,
+          url: `${cfg.server}/${cfg.topic}-response`,
+          method: 'POST',
+          clear: false,
+          body: JSON.stringify({ requestId, answer: o.label }),
+        }))
+      : undefined;
     const lines = [q.question || 'Question'];
     options.forEach((o, i) => lines.push(`${i + 1}. ${o.label}`));
     lines.push('');
-    lines.push(`（也可直接向话题 ${cfg.topic}-response 发送文字作答）`);
+    lines.push(
+      useActions
+        ? `（也可直接向话题 ${cfg.topic}-response 发送文字作答）`
+        : `（选项较多，请回复编号如「3」，或直接向话题 ${cfg.topic}-response 发送文字作答）`
+    );
+    if (!useActions && options.length > 3) {
+      process.stderr.write(`[dsh-hook] 选项 ${options.length} 个超 ntfy 按钮上限(3)，已降级为文字作答\n`);
+    }
 
     const sent = await sendNotification({
       ...cfg,
       title: `DSH: ${q.header || 'Question'}`,
       message: lines.join('\n'),
-      actions,
+      ...(actions ? { actions } : {}),
     });
     if (!sent) return null; // 推送失败 → 回退终端
 
     const resp = await waitForResponse({ ...cfg, requestId, timeout: cfg.timeout * 1000 });
     if (!resp?.answer) return null; // 手机超时 → 回退终端
 
+    // 降级场景下手机可能回编号（如「3」），映射回选项 label；
+    // 按钮场景 answer 本就是 label；自由文本则原样作为答案。
+    let answer = resp.answer;
+    if (!useActions) {
+      const idx = Number(String(answer).trim());
+      if (Number.isInteger(idx) && idx >= 1 && idx <= options.length) {
+        answer = options[idx - 1].label;
+      }
+    }
+
     answers.push({
       id: q.id,
-      selected: [resp.answer],
+      selected: [answer],
       ...(resp.custom ? { custom: resp.custom } : {}),
     });
   }

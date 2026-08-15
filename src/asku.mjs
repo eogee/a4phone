@@ -40,28 +40,46 @@ export async function handleAskUserQuestion(input, agentName, agent = 'claude') 
     const options = q.options || [];
     if (!options.length) continue;
     const requestId = crypto.randomUUID();
-    const actions = options.map((o) => ({
-      action: 'http',
-      label: o.label,
-      url: `${config.server}/${config.topic}-response`,
-      method: 'POST',
-      clear: false,
-      body: JSON.stringify({ requestId, answer: o.label }),
-    }));
+    // ntfy 最多允许 3 个 action 按钮（超过返回 HTTP 400，推送失败）。
+    // 选项 ≤3 → 按钮点选；>3 → 降级为文本编号列表 + 文字作答（waitForResponse 支持自由文本）。
+    const useActions = options.length <= 3;
+    const actions = useActions
+      ? options.map((o) => ({
+          action: 'http',
+          label: o.label,
+          url: `${config.server}/${config.topic}-response`,
+          method: 'POST',
+          clear: false,
+          body: JSON.stringify({ requestId, answer: o.label }),
+        }))
+      : undefined;
     const lines = [q.question];
     options.forEach((o, i) => lines.push(`${i + 1}. ${o.label}`));
     lines.push(''); // 留空行分隔
-    lines.push(`（也可直接向话题 ${config.topic}-response 发送文字作答）`);
+    lines.push(
+      useActions
+        ? `（也可直接向话题 ${config.topic}-response 发送文字作答）`
+        : `（选项较多，请回复编号如「3」，或直接向话题 ${config.topic}-response 发送文字作答）`
+    );
     const sent = await sendNotification({
       ...config,
       title: `${agentName}: ${q.header || 'Question'}`,
       message: lines.join('\n'),
-      actions,
+      ...(actions ? { actions } : {}),
     });
     if (!sent) return null; // 推送失败 → 回退终端
     const resp = await waitForResponse({ ...config, requestId, timeout: config.timeout * 1000 });
     if (!resp?.answer) return null; // 手机超时 → 回退终端
-    answers[q.question] = resp.answer;
+    // 降级场景下手机可能回编号（如「3」），映射回选项 label；
+    // 按钮场景 answer 本就是 label；自由文本则原样作为答案。
+    let answer = resp.answer;
+    if (!useActions) {
+      const idx = Number(String(answer).trim());
+      if (Number.isInteger(idx) && idx >= 1 && idx <= options.length) {
+        answer = options[idx - 1].label;
+      }
+    }
+    answers[q.question] = answer;
   }
 
   return buildAskOutput(agent, questions, answers);
