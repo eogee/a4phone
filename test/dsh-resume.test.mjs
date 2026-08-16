@@ -12,6 +12,7 @@ import {
   clearResponse,
   clearRequest,
   waitForResponseFile,
+  waitForDshReply,
   heartbeatAgeMs,
   isDshAlive,
 } from '../src/dsh-resume.mjs';
@@ -91,6 +92,37 @@ test('waitForResponseFile：等待响应出现并返回，超时返回 null', as
   // 超时：无响应 → null
   const timedOut = await waitForResponseFile('req-nope', 200, 50, dir);
   assert.equal(timedOut, null);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('waitForDshReply：插件中途死亡（心跳丢失）快速失败返回 {died:true}，不再干等超时', async () => {
+  const dir = tmpDir();
+  const id = 'req-heartbeat';
+  let alive = true;
+  // 心跳 1.2s 后丢失，heartbeatCheckMs=300ms
+  setTimeout(() => { alive = false; }, 1200);
+  const started = Date.now();
+  const out = await waitForDshReply(id, 10000, {
+    isAlive: () => alive,
+    heartbeatCheckMs: 300,
+    pollMs: 50,
+    dir,
+  });
+  const elapsed = Date.now() - started;
+  assert.deepEqual(out, { died: true }, '心跳丢失应返回 died 标记');
+  assert.ok(elapsed < 5000, `应在心跳丢失后快速失败（实际 ${elapsed}ms），而非干等超时`);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('waitForDshReply：心跳存活时正常等待响应/超时', async () => {
+  const dir = tmpDir();
+  const id = 'req-alive';
+  const resp = { id, ok: true, reply: '正常回复。' };
+  setTimeout(() => {
+    fs.writeFileSync(path.join(dir, `resp-${id}.json`), JSON.stringify(resp));
+  }, 200);
+  const got = await waitForDshReply(id, 3000, { isAlive: () => true, heartbeatCheckMs: 300, pollMs: 50, dir });
+  assert.deepEqual(got, resp, '心跳正常时按原逻辑等待响应');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

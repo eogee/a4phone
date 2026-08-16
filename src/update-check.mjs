@@ -14,6 +14,9 @@ import { sendNotification } from './ntfy.mjs';
 
 /** 默认检查间隔（小时）：守护进程周期检查与命令级限频共用 */
 export const DEFAULT_INTERVAL_HOURS = 6;
+/** 查询失败后的背退重试间隔：失败也记录 lastCheck，但只按该间隔限频，
+    避免离线/慢网下每次命令都重试网络（命令会因挂起的 fetch 卡住进程退出） */
+export const FAIL_RETRY_MS = 30 * 60 * 1000;
 
 /** 查询源：国内镜像优先（与用户 npm 配置一致，国内网络更稳），官方兜底 */
 const REGISTRIES = [
@@ -111,6 +114,7 @@ export async function checkForUpdate({
   minIntervalMs = null,
   localVersion = getLocalVersion(),
   latestVersion = undefined,
+  timeoutMs = 8000,
 } = {}) {
   const cfg = config || {};
   if (cfg.checkUpdates === false) {
@@ -127,9 +131,15 @@ export async function checkForUpdate({
     return { checked: false, hasUpdate: false, local: localVersion, latest: cache.knownLatest || null, notified: false };
   }
 
-  const latest = latestVersion !== undefined ? latestVersion : await fetchLatestVersion();
+  const latest = latestVersion !== undefined ? latestVersion : await fetchLatestVersion({ timeoutMs });
   if (!latest) {
-    // 查询失败：静默跳过（不记录 lastCheck，下次再试）
+    // 查询失败：记录 lastCheck 为"interval - 背退间隔"之前，使下次重试落在 FAIL_RETRY_MS 之后，
+    // 避免离线/慢网下每次命令都重新访问网络（P2：命令会因挂起的 fetch 卡住退出）
+    saveCache({
+      lastCheck: now - (intervalMs - FAIL_RETRY_MS),
+      knownLatest: cache.knownLatest,
+      version: localVersion,
+    }, cachePath);
     return { checked: true, hasUpdate: false, local: localVersion, latest: null, notified: false };
   }
 

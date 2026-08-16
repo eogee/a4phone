@@ -110,3 +110,24 @@ test('run 抛异常时跳过该批并继续后续批次', async () => {
   assert.deepEqual(calls, ['bad', 'good'], '异常批次跳过，后续批次继续');
   assert.equal(b.pendingCount, 0);
 });
+
+test('onTake：批次被取走时回调（用于取批即删持久化文件，实现 at-most-once）', async () => {
+  const taken = [];
+  const gate = deferred();
+  const run = async () => { await gate.promise; return true; };
+  const b = createBatcher({
+    run,
+    onTake: ({ texts, msgTime }) => taken.push({ texts, msgTime }),
+  });
+
+  const drain = b.submit('m1', 1);
+  await tick();
+  b.submit('m2', 2);
+  assert.equal(taken.length, 1, '第一条提交后应立刻被取走并回调');
+
+  gate.resolve();
+  await drain;
+  assert.equal(taken.length, 2, '第二条在第一条完成后被取走并回调');
+  assert.deepEqual(taken[1], { texts: ['m2'], msgTime: 2 });
+  assert.equal(b.pendingCount, 0);
+});

@@ -83,6 +83,33 @@ export async function waitForResponseFile(id, timeoutMs, pollMs = POLL_INTERVAL_
   return null;
 }
 
+/** DSH 续聊专用轮询：等待 resp 的同时周期复查心跳，插件中途死亡时快速失败
+ * （P4-2：避免 dsh web 退出后手机端干等满 resumeTimeout）。
+ * 返回 { died: true } 表示心跳丢失；null 表示超时；否则为 resp 内容。 */
+export async function waitForDshReply(id, timeoutMs, {
+  isAlive,
+  heartbeatCheckMs = 10_000,
+  pollMs = POLL_INTERVAL_MS,
+  dir = DSH_JOB_DIR,
+} = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let lastCheck = 0;
+  while (Date.now() < deadline) {
+    const resp = readResponse(id, dir);
+    if (resp) {
+      clearResponse(id, dir);
+      return resp;
+    }
+    const now = Date.now();
+    if (isAlive && now - lastCheck >= heartbeatCheckMs) {
+      lastCheck = now;
+      if (!isAlive()) return { died: true };
+    }
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+  return null;
+}
+
 /** 回复文本截断：去空行，取末尾一段（与 Claude/Codex 续聊的回推格式一致） */
 export function clipReply(reply) {
   const clean = (reply || '')
@@ -106,12 +133,15 @@ export async function runDshResume(text, { config = null, onLog = (s) => {} } = 
   const textClean = (text || '').trim();
   if (!textClean) return { ok: false, reason: '续聊内容为空。' };
 
+  // 失败反馈：把失败原因推回手机（P3-1：与 Claude/Codex 路径一致，手机端不干等无反馈）
+  const pushFailure = async (message) => {
+    await sendNotification({ ...config, title: 'DSH', message: `续聊失败\n\n${message}` });
+  };
+
   if (!isDshAlive()) {
-    return {
-      ok: false,
-      reason: '未检测到运行中的 DSH（dsh web 进程心跳过期）。' +
-        '请确认 dsh web 正在运行，且已挂载新版 dsh-hook 插件（可重新执行 a4p setup 挂载）。',
-    };
+    const reason = '未检测到运行中的 DSH（dsh web 进程心跳过期）。\n请确认 dsh web 正在运行，且已挂载新版 dsh-hook 插件（可重新执行 a4p setup 挂载）。';
+    await pushFailure(reason);
+    return { ok: false, reason };
   }
 
   // 最近 DSH 会话优先指定目标；无则交给插件兜底选最近顶层会话
@@ -122,13 +152,19 @@ export async function runDshResume(text, { config = null, onLog = (s) => {} } = 
   onLog(`DSH 续聊请求已提交${sessionId ? `（会话 ${sessionId.slice(0, 8)}）` : ''}，等待 dsh web 回复…`);
 
   const timeoutMs = (config.resumeTimeout ?? 1800) * 1000;
-  const resp = await waitForResponseFile(req.id, timeoutMs);
+  // 轮询期间周期复查心跳：插件中途死亡立即失败（P4-2），不再干等满超时
+  const resp = await waitForDshReply(req.id, timeoutMs, { isAlive: () => isDshAlive() });
   if (!resp) {
     clearRequest(req.id);
-    return {
-      ok: false,
-      reason: '续聊超时：dsh web 进程未在限时内回复（请确认 dsh web 正在运行，会话未被占用）。',
-    };
+    const reason = '续聊超时：dsh web 进程未在限时内回复（请确认 dsh web 正在运行，会话未被占用）。';
+    await pushFailure(reason);
+    return { ok: false, reason };
+  }
+  if (resp.died) {
+    clearRequest(req.id);
+    const reason = 'dsh web 进程在续聊中途退出（心跳丢失），续聊已中断，请重新发送消息。';
+    await pushFailure(reason);
+    return { ok: false, reason };
   }
 
   let message;

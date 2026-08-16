@@ -84,6 +84,8 @@ export async function handleAskUserQuestion(exec) {
   const answers = [];
   for (const q of questions) {
     const options = Array.isArray(q.options) ? q.options : [];
+    // 无选项的提问无法手机作答，直接跳过（与 asku.mjs 一致，避免推送后干等超时回退）
+    if (!options.length) continue;
     const requestId = crypto.randomUUID();
     // ntfy 最多允许 3 个 action 按钮（超过返回 HTTP 400，推送失败）。
     // 选项 ≤3 → 按钮点选；>3 → 降级为文本编号列表 + 文字作答（waitForResponse 支持自由文本）。

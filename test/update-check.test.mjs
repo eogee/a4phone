@@ -81,19 +81,35 @@ test('checkForUpdate：本地版本升级后忽略限频（立即检查）', asy
   fs.rmSync(path.dirname(cachePath), { recursive: true, force: true });
 });
 
-test('checkForUpdate：查询失败（latestVersion=null）时静默跳过', async () => {
+test('checkForUpdate：查询失败时写背退缓存（限频，避免每次命令重试网络）', async () => {
   const cachePath = tmpCache();
+  const now = Date.now();
   const out = await checkForUpdate({
     config: {},
     cachePath,
-    now: Date.now(),
+    now,
     latestVersion: null, // 模拟网络失败
     localVersion: '1.0.0',
   });
   assert.equal(out.checked, true);
   assert.equal(out.hasUpdate, false);
   assert.equal(out.latest, null);
-  assert.ok(!fs.existsSync(cachePath), '失败不写缓存，下次可重试');
+  // 失败也写缓存：lastCheck 被拨回 interval - FAIL_RETRY_MS，使下次重试落在背退间隔之后
+  const cache = loadCache(cachePath);
+  assert.ok(fs.existsSync(cachePath), '失败应写缓存（P2 修复）');
+  assert.equal(cache.version, '1.0.0');
+  assert.ok(cache.lastCheck <= now, 'lastCheck 不应晚于当前时间');
+  const intervalMs = 6 * 3600 * 1000;
+  assert.ok(now - cache.lastCheck >= intervalMs - 31 * 60 * 1000, 'lastCheck 应拨回约一个背退间隔');
+  // 背退间隔内再次检查 → 被限频跳过，不再访问网络
+  const again = await checkForUpdate({
+    config: {},
+    cachePath,
+    now: now + 5 * 60 * 1000, // 5 分钟后
+    latestVersion: null,
+    localVersion: '1.0.0',
+  });
+  assert.equal(again.checked, false, '背退间隔内不应重复检查');
   fs.rmSync(path.dirname(cachePath), { recursive: true, force: true });
 });
 

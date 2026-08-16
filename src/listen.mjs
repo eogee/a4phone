@@ -79,6 +79,9 @@ export async function runListen({ onLog = (s) => console.log(s) } = {}) {
 
   const batcher = createBatcher({
     log: onLog,
+    // 取批即删持久化文件（P4-1 a4p 侧 at-most-once）：批次一旦交给续聊管线，
+    // 进程崩溃后不再恢复，避免同一条手机消息重复注入会话
+    onTake: persistSnapshot,
     run: async ({ text, count, msgTime }) => {
       try {
         if (msgTime != null && isMessageStale(msgTime)) return false; // 旧消息，丢弃

@@ -14,7 +14,7 @@
 //   batcher.submit(text, msgTime); // 立即返回 drain 的 promise（fire-and-forget 也行）
 //   batcher.restore(texts, msgTime); // 启动时恢复上次未处理的批次
 //   batcher.pendingCount / batcher.pendingSnapshot() // 持久化与检查用
-export function createBatcher({ run, log = () => {} }) {
+export function createBatcher({ run, log = () => {}, onTake = null }) {
   let draining = null; // 正在执行的 drain 循环（防止并发）
   const pending = { texts: [], msgTime: null };
 
@@ -36,6 +36,11 @@ export function createBatcher({ run, log = () => {} }) {
             const msgTime = pending.msgTime;
             pending.texts = [];
             pending.msgTime = null;
+            // 取批即通知（P4-1：调用方在此删除持久化文件——批次已交付给续聊管线，
+            // 进程崩溃不再恢复它，a4p 侧实现 at-most-once，避免同一条消息重复注入）
+            if (onTake) {
+              try { onTake({ texts, msgTime }); } catch {}
+            }
             try {
               await run({ text: texts.join('\n\n'), count: texts.length, msgTime });
             } catch (error) {

@@ -56,6 +56,8 @@ if (cmd && !['hook', '--version', '-v', 'version', 'help', '--help', '-h'].inclu
   const notifier = makeConsoleNotifier();
   checkForUpdate({
     config: cfg,
+    // 命令路径用短超时：避免离线/慢网下命令进程被挂起的 fetch 拖住退出
+    timeoutMs: 3000,
     notify: async (latest) => {
       await notifier(latest);
       // 终端提示之外再推送手机，确保用户不会遗落更新消息

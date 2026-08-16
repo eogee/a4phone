@@ -111,8 +111,9 @@ function apply(ctx, config = {}) {
           turn: data.turn,
           reasonKind: data.reason.kind,
         });
-        // 续聊轮次的完成已由 a4p 推回手机（含回复文本），此处跳过重复推送
-        if (phoneEnabled && !isResumeInflight(session.id)) {
+        // 仅顶层会话推送通知（P3-2：subagent 轮次完成也会触发 turn/end，
+        // 若一并推送会刷屏；日志仍全量记录便于排查）
+        if (phoneEnabled && !isResumeInflight(session.id) && !session.header?.parentSession) {
           handleTaskComplete(session.id, { turn: data.turn }).catch((error) =>
             ctx.logger.warn(`dsh-hook: 任务完成推送失败: ${String(error)}`)
           );
