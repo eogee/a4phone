@@ -1,5 +1,6 @@
 // 系统原生通知（跨平台）
 import { spawn } from 'child_process';
+import path from 'node:path';
 
 export function systemNotify(title, message) {
   // 立即返回，不阻塞调用方
@@ -19,9 +20,12 @@ export function systemNotify(title, message) {
     cmd = [t, m];
   }
   const child = process.platform === 'win32'
-    ? spawn('powershell', cmd, { stdio: 'ignore', detached: process.platform !== 'win32' })
+    ? spawn(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), cmd, { stdio: 'ignore', detached: process.platform !== 'win32' })
     : process.platform === 'darwin'
       ? spawn('osascript', cmd, { stdio: 'ignore' })
       : spawn('notify-send', cmd, { stdio: 'ignore' });
+  // 修复：spawn 失败会触发 unhandled 'error' 事件并导致宿主进程崩溃，
+  // 必须挂 error 监听器让通知失败静默降级，而不是拖垮 dsh web。
+  child.on('error', () => {});
   child.unref();
 }
