@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { loadConfig, saveConfig } from './config.mjs';
 
 const SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json');
@@ -327,7 +327,7 @@ export function configureDsh({ profileDir = DSH_PROFILE_DIR, pluginEntry = dshPl
   try { content = fs.readFileSync(patchPath, 'utf-8'); } catch {}
 
   // 已挂载本插件的最新相对路径 → 幂等跳过
-  const rel = toPosix(path.relative(profileDir, pluginEntry));
+  const rel = pathToFileURL(pluginEntry).href; // file:/// 形式的合法文件 URL，避免盘符被当成 URL 协议
   const block = dshHookBlock(rel);
   if (content.includes(DSH_MARKER_START) && content.includes(block)) return false;
 
