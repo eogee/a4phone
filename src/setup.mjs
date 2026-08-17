@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { loadConfig, saveConfig } from './config.mjs';
 
 const SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json');
@@ -327,11 +327,16 @@ export function configureDsh({ profileDir = DSH_PROFILE_DIR, pluginEntry = dshPl
   try { content = fs.readFileSync(patchPath, 'utf-8'); } catch {}
 
   // 已挂载本插件的最新相对路径 → 幂等跳过
-  const rel = toPosix(path.relative(profileDir, pluginEntry));
+  const rel = pathToFileURL(pluginEntry).href; // file:/// 形式的合法文件 URL，避免盘符被当成 URL 协议
   const block = dshHookBlock(rel);
   if (content.includes(DSH_MARKER_START) && content.includes(block)) return false;
 
-  const base = stripDshHookBlocks(content).trimEnd().replace(/\n{3,}/g, '\n\n');
+  let base = stripDshHookBlocks(content).trimEnd().replace(/\n{3,}/g, '\n\n');
+  // 修复：默认 cordis.patch.yml 是空数组 `[]`。若在 `[]` 之后追加 `- insert:`
+  // 会形成两个根节点的非法 YAML（js-yaml 报 "end of the stream or a document
+  // separator is expected"），导致 dsh web 启动失败。这里把空数组基线去掉，
+  // 用 insert 条目替换而非追加。
+  base = base.replace(/^\s*\[\s*\]\s*$/m, '').trimEnd().replace(/\n{3,}/g, '\n\n');
   const out = (base ? base + '\n\n' : '') + block + '\n';
   fs.mkdirSync(profileDir, { recursive: true });
   fs.writeFileSync(patchPath, out);
