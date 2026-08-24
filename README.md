@@ -9,7 +9,7 @@ DSH（DeepSeek Harness）/ Claude Code / Codex 远程手机交互包。通过 [n
 - **任务完成通知**：`Stop` 事件（DSH 为 `turn/end`）→ 电脑弹窗 + 手机推送，包含 AI 最后输出的一段话
 - **AI 提问交互**：`AskUserQuestion`（Codex 为 `request_user_input`，DSH 为 `ask_user_question`）→ 手机显示选项按钮点选，也可直接发送文字自由作答
 - **权限请求交互**：`PermissionRequest` → 手机 Approve/Deny/Always Approve
-- **DSH 一键挂载**：`a4p setup` 自动把内置 `dsh-hook` 插件挂到 DSH web profile，让 DeepSeek Harness 同样具备手机交互
+- **DSH 一键挂载**：`a4p setup` 自动把内置 `dsh-hook` 插件挂到 DSH **全部已装 profile**（web / tui / dsh-tui 等），守护进程周期扫描、新装 profile 自动补挂，让 DeepSeek Harness 同样具备手机交互
 - **远程续聊**：守护进程监听主话题，手机发文字即可与当前会话交流，形成完整远程对话闭环（DSH / Claude Code / Codex）
 - **DSH 远程续聊**：手机发文字直接注入 DSH 正在运行的会话（`agent.followup`），手机消息与 AI 回复**实时出现在桌面端会话里**，无需另起进程、无会话锁冲突
 - **后台守护进程**：`a4p listen` 无窗口后台运行，日志写入文件
@@ -48,7 +48,7 @@ a4p help         # 显示帮助
 
 1. 生成独一无二的话题名称（如 `a4p-xxxx`），写入 `~/.a4phone/config.json`
 2. 在 `~/.claude/settings.json` 注册三个 Hook（Stop / AskUserQuestion / PermissionRequest），并同时写入 `~/.codex/config.toml` 的 Codex Hook（见下文 [Codex](#codex) 一节）
-3. 检测到 DSH 环境时，把内置 `dsh-hook` 插件挂载到 `~/.dsh/profiles/web/cordis.patch.yml`（见下文 [DSH](#dshdeepseek-harness) 一节）
+3. 检测到 DSH 环境时，把内置 `dsh-hook` 插件挂载到 `~/.dsh/profiles/` 下**所有 profile** 的 `cordis.patch.yml`（web / tui / dsh-tui 等；守护进程后续每 10 分钟重扫，新装 profile 自动补挂，见下文 [DSH](#dshdeepseek-harness) 一节）
 4. **默认启动续聊守护进程**（`a4p listen` 后台运行）
 5. **默认注册开机自启**（Windows 启动文件夹写入隐藏 VBS，登录时自动运行守护进程）
 6. 在终端显示二维码
@@ -140,20 +140,22 @@ command = "a4p hook codex"
 
 ## DSH（DeepSeek Harness）
 
-`a4p setup` 检测到 DSH 环境（`~/.dsh/profiles/web` 存在）时，会把内置的 `dsh-hook` 插件挂载到 web profile 的 `cordis.patch.yml`，让 DeepSeek Harness 同样具备手机远程交互。插件复用同一 a4phone 话题与模式，手机端无需额外订阅。
+`a4p setup` 检测到 DSH 环境（`~/.dsh/profiles/` 存在）时，会扫描**全部 profile**（web / tui / dsh-tui 及后续新装的变体），把内置的 `dsh-hook` 插件挂载到每个 profile 的 `cordis.patch.yml`，让 DeepSeek Harness 同样具备手机远程交互。插件复用同一 a4phone 话题与模式，手机端无需额外订阅。
 
-| Hook | 触发事件 | 手机交互（外出模式） |
-|------|---------|---------------------|
-| 任务完成 | `turn/end` 且 `reason.kind === 'completed'` | 系统通知 + 手机推送（含 AI 最后输出） |
-| 提问 | `ask_user_question` 工具调用 | 手机点选选项 / 文字自由作答 |
-| 权限请求 | `approval/request` | 手机 Approve / Deny |
-| 远程续聊 | 文件队列 `~/.a4phone/dsh-jobs/`（a4p 写请求，插件回复） | 手机发文字 → `agent.followup` 注入当前会话 → 回复推回手机 |
+| Hook | 触发事件 | 桌面通知 | 手机交互（外出模式） |
+|------|---------|---------|---------------------|
+| 任务完成 | `turn/end` 且 `reason.kind === 'completed'` | ✔ 电脑弹窗 | 手机推送（含 AI 最后输出） |
+| 提问 | `ask_user_question` 工具调用 | ✔ 电脑弹窗「有提问需要处理」 | 手机点选选项 / 文字自由作答 |
+| 权限请求 | `approval/request` | ✔ 电脑弹窗「有权限请求需要处理」 | 手机 Approve / Deny |
+| 远程续聊 | 文件队列 `~/.a4phone/dsh-jobs/`（a4p 写请求，插件回复） | — | 手机发文字 → `agent.followup` 注入当前会话 → 回复推回手机 |
 
 - 插件位于本包 `dsh/` 目录（Cordis 插件，监听 DSH 的 `session/event`、`tools/execute`、`approval/request` 事件），`a4p setup` 以 insert 形式写入 patch，幂等可重复执行
 - 若检测到旧版手动挂载（指向 `C:\ProgramMine\dsh-hook` 的 `id: dsh-hook`），`a4p setup` 会自动替换为本包路径
 - `cordis.patch.yml` 被 DSH 热监视（`watchUserPatches`），挂载即时生效；若插件代码有更新，建议重启 `dsh web`（可参考 `restart-dsh-web.ps1` 的思路）
 - 模式切换复用同一套：`a4p out`（手机优先）/ `a4p home`（终端优先）；Hook 日志写入 `~/.a4phone/dsh-logs/`
-- 目前仅挂载到 `web` profile；`a4p uninstall` 会同时移除该挂载
+- **多 profile 自动发现**：profile 身份文件为子目录下的 `cordis.yml`；除 `setup` 全量扫描外，续聊守护进程每 10 分钟重扫一次，新装 profile 无需重跑 setup 即可自动补挂
+- 提问与权限请求的桌面弹窗在 home/out 模式下均会触发；手机点选仅外出模式参与
+- `a4p uninstall` 会同时移除所有 profile 的挂载
 
 ### DSH 远程续聊
 

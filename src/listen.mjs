@@ -14,9 +14,31 @@ import { createBatcher } from './batcher.mjs';
 import { checkForUpdate, makePhoneNotifier } from './update-check.mjs';
 import { parseNtfyMessage } from './ntfy.mjs';
 import { PENDING_PATH, ensureDir } from './paths.mjs';
+import { configureDsh } from './setup.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const RETRY_DELAY = 5000;
+// DSH profile 自动发现扫描间隔：新装 profile（如后续安装的 tui/dsh-tui 变体）
+// 无需重跑 a4p setup，守护进程周期重扫自动补挂
+const PROFILE_SCAN_INTERVAL_MS = 10 * 60 * 1000;
+
+/**
+ * 扫描 ~/.dsh/profiles 并为所有 profile 补挂 dsh-hook（幂等），
+ * 有新挂载时写日志。导出便于测试与手动调用。
+ * @param {(msg: string) => void} [onLog]
+ * @param {object} [opts] 透传给 configureDsh（profilesDir/pluginEntry，测试用）
+ * @returns {string[]} 本次新挂载的 profile 名列表
+ */
+export function ensureDshProfiles(onLog = () => {}, opts = {}) {
+  try {
+    const r = configureDsh(opts);
+    if (r && Array.isArray(r.mounted) && r.mounted.length) {
+      onLog(`发现 DSH profile，已自动挂载手机交互插件：${r.mounted.join('、')}`);
+      return r.mounted;
+    }
+  } catch {}
+  return [];
+}
 
 export function createLogWriter(logPath) {
   const stream = fs.createWriteStream(logPath, { flags: 'a' });
@@ -124,6 +146,10 @@ export async function runListen({ onLog = (s) => console.log(s) } = {}) {
   await checkUpdate();
   const intervalMs = (config.updateIntervalHours ?? 6) * 3600 * 1000;
   setInterval(() => { checkUpdate().catch(() => {}); }, intervalMs).unref();
+
+  // ── DSH profile 自动发现：启动时 + 周期扫描，新装 profile 自动补挂插件 ──
+  ensureDshProfiles(onLog);
+  setInterval(() => { ensureDshProfiles(onLog); }, PROFILE_SCAN_INTERVAL_MS).unref();
 
   while (true) {
     try {

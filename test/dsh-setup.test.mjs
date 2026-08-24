@@ -1,12 +1,14 @@
 // configureDsh / unconfigureDsh 单元测试：
 //   旧版手动挂载替换、幂等跳过、缺失 profile 跳过、
-//   卸载保留头注释与其他插件条目、往返一致
+//   卸载保留头注释与其他插件条目、往返一致、
+//   多 profile 发现（cordis.yml 身份文件过滤）、批量挂载/卸载
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { configureDsh, unconfigureDsh } from '../src/setup.mjs';
+import { configureDsh, unconfigureDsh, discoverDshProfiles } from '../src/setup.mjs';
+import { ensureDshProfiles } from '../src/listen.mjs';
 
 function tmpdir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'a4p-dsh-test-'));
@@ -161,5 +163,96 @@ test('unconfigureDsh patch 文件不存在时返回 false', () => {
   const dir = tmpdir();
   const profileDir = path.join(dir, 'profiles', 'web'); // 不创建 patch
   assert.equal(unconfigureDsh({ profileDir }), false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ── 多 profile 发现与批量挂载 ─────────────────────────────────────────
+
+// 构造多 profile 环境：web 预置「头注释 + 旧手动挂载 + 其他插件」的 patch，
+// tui/dsh-tui 为全新 profile（仅 cordis.yml）；node_modules 与空目录应被排除
+function multiProfileDir() {
+  const dir = tmpdir();
+  const profilesDir = path.join(dir, 'profiles');
+  for (const name of ['web', 'tui', 'dsh-tui']) {
+    fs.mkdirSync(path.join(profilesDir, name), { recursive: true });
+    fs.writeFileSync(path.join(profilesDir, name, 'cordis.yml'), '# profile\n');
+  }
+  fs.writeFileSync(path.join(profilesDir, 'web', 'cordis.patch.yml'), legacyPatch());
+  fs.mkdirSync(path.join(profilesDir, 'node_modules'), { recursive: true }); // 非 profile
+  fs.mkdirSync(path.join(profilesDir, 'empty'), { recursive: true }); // 无 cordis.yml，非 profile
+  return { dir, profilesDir };
+}
+
+test('discoverDshProfiles 只返回含 cordis.yml 的子目录', () => {
+  const { dir, profilesDir } = multiProfileDir();
+  const found = discoverDshProfiles(profilesDir).map((p) => path.basename(p)).sort();
+  assert.deepEqual(found, ['dsh-tui', 'tui', 'web']);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('discoverDshProfiles 目录不存在时返回空数组', () => {
+  assert.deepEqual(discoverDshProfiles(path.join(tmpdir(), 'no-such-dir')), []);
+});
+
+test('configureDsh 批量模式挂载全部 profile 并返回 mounted 列表', () => {
+  const { dir, profilesDir } = multiProfileDir();
+  const entry = pluginEntry(dir);
+  fs.mkdirSync(path.dirname(entry), { recursive: true });
+  fs.writeFileSync(entry, '// placeholder\n');
+
+  const r = configureDsh({ profilesDir, pluginEntry: entry });
+  assert.equal(r.scanned, 3);
+  assert.deepEqual([...r.mounted].sort(), ['dsh-tui', 'tui', 'web']);
+
+  // web：旧挂载被替换，头注释与其他插件条目保留
+  const webOut = fs.readFileSync(path.join(profilesDir, 'web', 'cordis.patch.yml'), 'utf-8');
+  assert.ok(!webOut.includes('ProgramMine/dsh-hook'), '旧挂载应被移除');
+  assert.ok(webOut.includes('id: dsh-hook'), '应写入新挂载');
+  assert.ok(webOut.includes(HEADER), 'web 头注释应保留');
+  assert.ok(webOut.includes('my-plugin'), '其他插件条目应保留');
+
+  // 全新 profile：创建 patch 并挂载
+  for (const name of ['tui', 'dsh-tui']) {
+    const out = fs.readFileSync(path.join(profilesDir, name, 'cordis.patch.yml'), 'utf-8');
+    assert.ok(out.includes('id: dsh-hook'), `${name} 应已挂载`);
+  }
+  // 幂等：再次扫描无新挂载
+  const again = configureDsh({ profilesDir, pluginEntry: entry });
+  assert.deepEqual(again.mounted, []);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('unconfigureDsh 批量模式清理所有 profile 的挂载', () => {
+  const { dir, profilesDir } = multiProfileDir();
+  const entry = pluginEntry(dir);
+  fs.mkdirSync(path.dirname(entry), { recursive: true });
+  fs.writeFileSync(entry, '// placeholder\n');
+  configureDsh({ profilesDir, pluginEntry: entry });
+
+  assert.equal(unconfigureDsh({ profilesDir }), true, '任一清理即返回 true');
+  for (const name of ['web', 'tui', 'dsh-tui']) {
+    const out = fs.readFileSync(path.join(profilesDir, name, 'cordis.patch.yml'), 'utf-8');
+    assert.ok(!out.includes('id: dsh-hook'), `${name} 挂载应移除`);
+  }
+  assert.ok(fs.readFileSync(path.join(profilesDir, 'web', 'cordis.patch.yml'), 'utf-8').includes(HEADER),
+    'web 头注释应保留');
+  assert.equal(unconfigureDsh({ profilesDir }), false, '再次清理应返回 false');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('ensureDshProfiles 新挂载时写日志并返回列表，重复调用静默', () => {
+  const { dir, profilesDir } = multiProfileDir();
+  const entry = pluginEntry(dir);
+  fs.mkdirSync(path.dirname(entry), { recursive: true });
+  fs.writeFileSync(entry, '// placeholder\n');
+
+  const logs = [];
+  const first = ensureDshProfiles((m) => logs.push(m), { profilesDir, pluginEntry: entry });
+  assert.deepEqual([...first].sort(), ['dsh-tui', 'tui', 'web'], '首次应返回新挂载列表');
+  assert.equal(logs.length, 1, '首次应写一条日志');
+
+  const second = ensureDshProfiles((m) => logs.push(m), { profilesDir, pluginEntry: entry });
+  assert.deepEqual(second, [], '重复调用无新挂载');
+  assert.equal(logs.length, 1, '不应重复写日志');
   fs.rmSync(dir, { recursive: true, force: true });
 });

@@ -24,7 +24,7 @@ migrateLegacy();
 function showHelp() {
   console.log('a4phone — Claude Code / Codex / DSH 远程手机交互\n');
   console.log('用法:');
-  console.log('  a4p setup       安装引导（生成话题、注册 Hook、挂载 DSH 插件、显示二维码）');
+  console.log('  a4p setup       安装引导（生成话题、注册 Hook、为全部 DSH profile 挂载插件、显示二维码）');
   console.log('  a4p out         外出模式（手机优先）');
   console.log('  a4p home        终端优先模式（默认）');
   console.log('  a4p status      查看当前模式');

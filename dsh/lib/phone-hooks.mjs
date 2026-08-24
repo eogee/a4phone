@@ -68,6 +68,8 @@ export async function handleTaskComplete(sessionId, extra = {}) {
 
 /**
  * Hook 2: 问题询问 → 拦截 ask_user_question 工具调用，推送手机点选/文字作答。
+ * 与 a4phone 的 hook.mjs 对齐：无论何种模式先弹桌面通知（有提问需要处理），
+ * 外出模式再推手机点选，home 模式放行 DSH 原生交互。
  * 复用 a4phone 的 buildAskOutput 思路：DSH 的 ask_user_question 输出契约是
  * { answers: [{ id, selected, custom? }] }，因此直接返回该结构即可。
  * 手机超时/推送失败/终端模式 → 返回 null 表示放行 DSH 原生提问。
@@ -75,6 +77,8 @@ export async function handleTaskComplete(sessionId, extra = {}) {
  * @returns {Promise<{answers: Array<object>} | null>}
  */
 export async function handleAskUserQuestion(exec) {
+  // 桌面通知无条件触发（含 home 模式），与 Claude Code / Codex 路径行为一致
+  systemNotify('DSH', '有提问需要处理');
   if (!phoneActive()) return null;
   const cfg = loadConfig();
   const args = exec.arguments || {};
@@ -146,6 +150,8 @@ export async function handleAskUserQuestion(exec) {
 
 /**
  * Hook 3: 权限请求 → 拦截 approval/request，推送手机 Approve/Deny/Always。
+ * 与 a4phone 的 hook.mjs 对齐：无论何种模式先弹桌面通知（有权限请求需要处理），
+ * 外出模式再推手机点选，home 模式放行原生审批链。
  * 复用 a4phone 的 handlePermissionRequest 思路；DSH 的 ApprovalOutcome 契约是
  * 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'，手机点选映射为
  * allowed-once / rejected。手机超时/推送失败/终端模式 → 返回 null 放行原链。
@@ -153,6 +159,8 @@ export async function handleAskUserQuestion(exec) {
  * @returns {Promise<import('@deepseek-ai/dsh-user-approval').ApprovalOutcome | null>}
  */
 export async function handleApprovalRequest(req) {
+  // 桌面通知无条件触发（含 home 模式），与 Claude Code / Codex 路径行为一致
+  systemNotify('DSH', '有权限请求需要处理');
   if (!phoneActive()) return null;
   const cfg = loadConfig();
 

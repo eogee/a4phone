@@ -260,11 +260,11 @@ export function unconfigureCodex(codexPath = CODEX_PATH) {
 
 // ── DSH（DeepSeek Harness）Hook 插件挂载 ─────────────────────────────
 // 复用本包 dsh/ 插件（Cordis 插件，监听 DSH 会话事件与工具/审批管线），
-// 以 insert 形式追加到 web profile 的 cordis.patch.yml（热生效，无需重启）。
-// 目标 profile 与插件的 name 相对路径在运行时计算，避免硬编码。
-const DSH_PROFILE_NAME = 'web';
-const DSH_PROFILE_DIR = path.join(os.homedir(), '.dsh', 'profiles', DSH_PROFILE_NAME);
-const DSH_PATCH_PATH = path.join(DSH_PROFILE_DIR, 'cordis.patch.yml');
+// 以 insert 形式追加到各 profile 的 cordis.patch.yml（热生效，无需重启）。
+// profile 发现机制：扫描 ~/.dsh/profiles/ 下所有含 cordis.yml 的子目录
+// （web / tui / dsh-tui 及后续新装的变体均可覆盖），插件 name 按各 profile
+// 目录分别计算相对路径；守护进程（a4p listen）周期重扫，新装 profile 自动补挂。
+const DSH_PROFILES_DIR = path.join(os.homedir(), '.dsh', 'profiles');
 const DSH_MARKER_START = '# ===== a4phone dsh-hook (auto-generated) =====';
 const DSH_MARKER_END = '# ===== end a4phone dsh-hook =====';
 
@@ -318,9 +318,26 @@ function stripDshHookBlocks(content) {
   return out.join('\n');
 }
 
-// 写入 dsh-hook 挂载（幂等）：返回 true=已写入，false=跳过（未检测到 profile 或已是最新）。
-// 显式传入 profileDir/pluginEntry 便于测试（沿用 configureCodex(codexPath) 的模式）。
-export function configureDsh({ profileDir = DSH_PROFILE_DIR, pluginEntry = dshPluginEntry() } = {}) {
+// 发现所有 DSH profile：profiles 目录下含 cordis.yml 的子目录
+// （cordis.yml 是 profile 的身份文件；node_modules 等非 profile 目录自动排除）。
+// 导出便于测试与守护进程复用。
+export function discoverDshProfiles(profilesDir = DSH_PROFILES_DIR) {
+  let entries;
+  try {
+    entries = fs.readdirSync(profilesDir, { withFileTypes: true });
+  } catch {
+    return []; // ~/.dsh/profiles 不存在：DSH 未安装
+  }
+  return entries
+    .filter((e) => e.isDirectory() && e.name !== 'node_modules')
+    .map((e) => path.join(profilesDir, e.name))
+    .filter((dir) => {
+      try { return fs.existsSync(path.join(dir, 'cordis.yml')); } catch { return false; }
+    });
+}
+
+// 单个 profile 的挂载写入（幂等）：返回 true=已写入，false=跳过（profile 不存在或已是最新）。
+function mountDshHook({ profileDir, pluginEntry }) {
   if (!fs.existsSync(profileDir)) return false; // dsh 未初始化，跳过
   const patchPath = path.join(profileDir, 'cordis.patch.yml');
   let content = '';
@@ -338,15 +355,37 @@ export function configureDsh({ profileDir = DSH_PROFILE_DIR, pluginEntry = dshPl
   return true;
 }
 
-// 移除 dsh-hook 挂载（uninstall）：返回 true=已改写，false=无挂载/未检测到 profile。
-export function unconfigureDsh({ profileDir = DSH_PROFILE_DIR } = {}) {
-  const patchPath = path.join(profileDir, 'cordis.patch.yml');
-  if (!fs.existsSync(patchPath)) return false;
-  const content = fs.readFileSync(patchPath, 'utf-8');
-  const stripped = stripDshHookBlocks(content).replace(/\n{3,}/g, '\n\n').trim();
-  if (stripped === content.trim()) return false; // 无 a4phone dsh-hook 挂载
-  fs.writeFileSync(patchPath, stripped ? stripped + '\n' : '');
-  return true;
+// 写入 dsh-hook 挂载，两种模式：
+//   - 显式传入 profileDir：仅处理该 profile，返回 boolean（兼容旧调用与单测）
+//   - 未传 profileDir：扫描 ~/.dsh/profiles 下全部 profile，
+//     返回 { scanned, mounted }（mounted 为本次新写入的 profile 名列表）
+// 显式传入参数便于测试（沿用 configureCodex(codexPath) 的模式）。
+export function configureDsh({ profileDir, profilesDir = DSH_PROFILES_DIR, pluginEntry = dshPluginEntry() } = {}) {
+  if (profileDir) return mountDshHook({ profileDir, pluginEntry });
+  const profiles = discoverDshProfiles(profilesDir);
+  const mounted = [];
+  for (const dir of profiles) {
+    if (mountDshHook({ profileDir: dir, pluginEntry })) mounted.push(path.basename(dir));
+  }
+  return { scanned: profiles.length, mounted };
+}
+
+// 移除 dsh-hook 挂载（uninstall），同样支持两种模式：
+//   - 显式传入 profileDir：仅清理该 profile，返回 boolean
+//   - 未传：清理所有发现的 profile，任一改写即返回 true
+export function unconfigureDsh({ profileDir, profilesDir = DSH_PROFILES_DIR } = {}) {
+  const dirs = profileDir ? [profileDir] : discoverDshProfiles(profilesDir);
+  let changed = false;
+  for (const dir of dirs) {
+    const patchPath = path.join(dir, 'cordis.patch.yml');
+    if (!fs.existsSync(patchPath)) continue;
+    const content = fs.readFileSync(patchPath, 'utf-8');
+    const stripped = stripDshHookBlocks(content).replace(/\n{3,}/g, '\n\n').trim();
+    if (stripped === content.trim()) continue; // 该 profile 无 a4phone dsh-hook 挂载
+    fs.writeFileSync(patchPath, stripped ? stripped + '\n' : '');
+    changed = true;
+  }
+  return changed;
 }
 
 // setup 主流程
@@ -360,7 +399,7 @@ export async function runSetup({ generateQR }) {
 
   const claudeConfigured = registerHooks(SETTINGS_PATH, hookCommand());
   const codexConfigured = configureCodex();
-  const dshConfigured = configureDsh();
+  const dshResult = configureDsh();
 
   const subscribeUrl = `${config.server}/${config.topic}`;
   const ntfyUrl = `ntfy://${new URL(config.server).host}/${config.topic}`;
@@ -377,9 +416,17 @@ export async function runSetup({ generateQR }) {
   process.stdout.write('\n在 ntfy App 添加订阅，输入话题名称或扫描上方二维码。\n');
   process.stdout.write(`Claude Code 配置：${claudeConfigured ? '已自动写入 ~/.claude/settings.json' : '已存在，跳过'}\n`);
   process.stdout.write(`Codex 配置：${codexConfigured ? '已自动写入 ~/.codex/config.toml' : '已存在，跳过'}\n`);
-  const dshStatus = !fs.existsSync(DSH_PROFILE_DIR)
-    ? '未检测到 DSH 环境（~/.dsh/profiles/web），跳过'
-    : dshConfigured ? '已自动写入 ~/.dsh/profiles/web/cordis.patch.yml' : '已存在，跳过';
+  let dshStatus;
+  if (!fs.existsSync(DSH_PROFILES_DIR)) {
+    dshStatus = '未检测到 DSH 环境（~/.dsh/profiles），跳过';
+  } else if (!dshResult.scanned) {
+    dshStatus = '~/.dsh/profiles 下暂无 profile，跳过（新装 profile 后守护进程会自动补挂）';
+  } else {
+    const names = discoverDshProfiles().map((p) => path.basename(p));
+    dshStatus = dshResult.mounted.length
+      ? `已自动写入 cordis.patch.yml：${dshResult.mounted.join('、')}（共 ${names.length} 个 profile：${names.join('、')}）`
+      : `已存在，跳过（共 ${names.length} 个 profile：${names.join('、')}）`;
+  }
   process.stdout.write(`DSH 配置：${dshStatus}\n`);
   process.stdout.write('模式切换：a4p out（外出/手机优先） / a4p home（终端优先） / a4p status\n');
   process.stdout.write('重启 Claude Code / Codex 会话后 Hook 生效（DSH 插件热生效，无需重启）。\n');
