@@ -111,6 +111,27 @@ test('configureDsh 全新 profile（无 patch 文件）时创建 patch', () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('configureDsh 挂载到默认模板（含 [] 占位符）时移除占位符避免双文档', () => {
+  const dir = tmpdir();
+  const profileDir = path.join(dir, 'profiles', 'dsh-tui');
+  fs.mkdirSync(profileDir, { recursive: true });
+  const patchPath = path.join(profileDir, 'cordis.patch.yml');
+  // 新装 profile 的出厂模板：头注释 + 空数组占位符（本身已是完整 YAML 文档）
+  fs.writeFileSync(patchPath, HEADER + '\n[]\n');
+
+  const entry = pluginEntry(dir);
+  fs.mkdirSync(path.dirname(entry), { recursive: true });
+  fs.writeFileSync(entry, '// placeholder\n');
+
+  assert.equal(configureDsh({ profileDir, pluginEntry: entry }), true);
+  const out = fs.readFileSync(patchPath, 'utf-8');
+  assert.ok(!/^[ \t]*\[\][ \t]*$/m.test(out), '`[]` 占位符应被移除');
+  assert.ok(out.includes(HEADER), 'profile 头注释应保留');
+  assert.ok(out.includes('id: dsh-hook'), '应写入挂载块');
+  assert.equal([...out.matchAll(/^- insert:/gm)].length, 1, '顶层应只有一个条目，不产生两个 YAML 文档');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('unconfigureDsh 移除挂载，保留头注释与其他条目', () => {
   const dir = tmpdir();
   const profileDir = path.join(dir, 'profiles', 'web');

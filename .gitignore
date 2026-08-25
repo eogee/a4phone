@@ -4,4 +4,5 @@ node_modules/
 *.log
 memory/
 .claude/
+.dsh/
 TESTING.md

@@ -348,7 +348,12 @@ function mountDshHook({ profileDir, pluginEntry }) {
   const block = dshHookBlock(rel);
   if (content.includes(DSH_MARKER_START) && content.includes(block)) return false;
 
-  const base = stripDshHookBlocks(content).trimEnd().replace(/\n{3,}/g, '\n\n');
+  // 默认模板占位符 `[]` 本身就是一个完整的 YAML 文档；若原样保留再往后追加
+  // 条目，文件会变成两个没有 `---` 分隔的文档，DSH 启动解析时报
+  // "end of the stream or a document separator is expected"，故追加前移除。
+  const base = stripDshHookBlocks(content)
+    .replace(/^[ \t]*\[\][ \t]*\r?$/m, '')
+    .trimEnd().replace(/\n{3,}/g, '\n\n');
   const out = (base ? base + '\n\n' : '') + block + '\n';
   fs.mkdirSync(profileDir, { recursive: true });
   fs.writeFileSync(patchPath, out);
