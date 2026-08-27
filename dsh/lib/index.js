@@ -34,7 +34,8 @@ const name = 'dsh-hook';
 // 监听 tools/execute 与 approval/request 需要注入这两个服务；
 // session/event 直接 ctx.on 即可（与 dsh-session-telemetry 一致）。
 // agents 供续聊服务解析目标会话（ctx.agents.get / roots）。
-const inject = ['tools', 'approval', 'agents'];
+// workspaceRegistry / sessionPersistence 供“孤儿会话自愈”（临时性外部兜底）按 cwd 归组。
+const inject = ['tools', 'approval', 'agents', 'workspaceRegistry', 'sessionPersistence'];
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -69,9 +70,57 @@ function record(ctx, logDir, hook, payload) {
 }
 
 /**
+ * 孤儿会话自愈（临时性外部兜底方案）：把“已持久化但未计入任何 workspace 项目”的会话，
+ * 按其 header.cwd 归入对应项目（必要时自动新建 workspace 记录）。
+ *
+ * 【定位：临时方案，非根因修复】
+ * 根因是 DSH 核心 workspace 注册表的记账缺口：首次启动时用 header 归组历史目录，
+ * 此后产生的会话（旧版 TUI、headless、部分启动入口等）只写会话日志、不主动记账，
+ * 于是永久落在“未分组”。DSH 官方已将此列为已知待办
+ * （@deepseek-ai/dsh-workspace README 的 "Known Limitations and Deferred Work"）。
+ *
+ * 本方案由 a4phone 在 DSH 插件中提供，作为 DSH 官方修复该 bug 之前的过渡措施：
+ * 在每次启动时把缺口补上（幂等，只处理未记账的会话；失败只记日志不影响启动）。
+ *
+ * 【退出策略】
+ * 一旦 DSH 官方修复了 workspace 记账（让所有会话在产生时即被正确归组），
+ * 本模块应被评估移除——它属于与 a4phone 核心功能无关的冗余设计，
+ * 不应长期留在代码中。请见 README 中 "### 待办：DSH workspace 记账归组缺陷" 一节。
+ *
+ * @param ctx cordis 插件上下文
+ */
+async function healUngroupedSessions(ctx) {
+  const registry = ctx.get('workspaceRegistry');
+  const persistence = ctx.get('sessionPersistence');
+  if (registry === undefined || persistence === undefined) return;
+  let headers;
+  try {
+    headers = await persistence.list();
+  } catch (error) {
+    ctx.logger.warn(`dsh-hook: 会话自愈读取持久化列表失败: ${String(error)}`);
+    return;
+  }
+  const accounted = new Set();
+  for (const workspace of registry.list()) {
+    for (const id of workspace.sessionIds) accounted.add(id);
+  }
+  for (const header of headers) {
+    if (header.cwd === undefined || accounted.has(header.id)) continue;
+    try {
+      const workspace = await registry.resolveByPath(header.cwd) ?? await registry.create(header.cwd);
+      await workspace.attachSession(header.id);
+      accounted.add(header.id);
+      ctx.logger.info(`dsh-hook: 已把未分组会话 ${header.id} 归入项目 ${workspace.title}`);
+    } catch (error) {
+      ctx.logger.warn(`dsh-hook: 会话 ${header.id} 归位失败，保持未分组: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}
+
+/**
  * 插件入口：注册三个 hook 的事件监听（日志 + 手机交互）。
  * @param ctx cordis 插件上下文
- * @param config 插件配置 { logDir?, taskComplete?, permissionRequest?, questionAsked?, phone? }
+ * @param config 插件配置 { logDir?, taskComplete?, permissionRequest?, questionAsked?, phone?, healWorkspaces? }
  */
 function apply(ctx, config = {}) {
   // 默认日志目录移到 ~/.a4phone/dsh-logs（a4phone 状态目录），不再写插件目录
@@ -199,6 +248,17 @@ function apply(ctx, config = {}) {
   // 与桌面端共享同一个 live 会话：手机文字会以 user/message 出现在桌面会话中，
   // AI 回复同样写入会话（桌面实时可见），并经 a4p 推回手机。
   const stopResume = enableResume ? startResumeService(ctx) : () => {};
+
+  // ── 孤儿会话自愈（临时性外部兜底：待 DSH 官方修复记账后移除）──────────
+  // 等待 loader 就绪后，把已持久化但未记账的会话按 cwd 归入项目；
+  // 幂等、只补缺口，可经 config.healWorkspaces: false 关闭。
+  if (config.healWorkspaces !== false) {
+    const loader = ctx.get('loader');
+    const ready = loader?.await === undefined ? Promise.resolve() : loader.await();
+    void ready
+      .then(() => healUngroupedSessions(ctx))
+      .catch((error) => ctx.logger.warn(`dsh-hook: 孤儿会话自愈失败: ${String(error)}`));
+  }
 
   ctx.logger.info('dsh-hook: 已挂载三个 hook（task-complete / permission-request / question-asked）与续聊服务');
 

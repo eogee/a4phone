@@ -1,6 +1,6 @@
 {
   "name": "a4phone",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "Claude Code / Codex / DSH 远程手机交互：任务完成通知（含 AI 最后输出）、提问/权限请求手机点选或文字作答、远程续聊（ntfy.sh，含 DSH 会话续聊）",
   "type": "module",
   "bin": {
