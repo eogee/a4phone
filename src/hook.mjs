@@ -9,6 +9,7 @@ import { handlePermissionRequest } from './permission.mjs';
 export function agentName(agent) {
   if (agent === 'codex') return 'Codex';
   if (agent === 'zcode') return 'ZCode';
+  if (agent === 'codebuddy') return 'CodeBuddy';
   return 'Claude Code';
 }
 

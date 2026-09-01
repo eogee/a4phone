@@ -213,6 +213,37 @@ async function runZcodeResume(text, { config, onLog, last }) {
   return { ok: true, code: proc.code };
 }
 
+// CodeBuddy 续聊：headless 调 codebuddy CLI 续聊指定会话，回推回复到手机
+async function runCodebuddyResume(text, { config, onLog, last }) {
+  const { findCodebuddyCli, buildCodebuddyArgs, extractCodebuddyReply } = await import('./codebuddy.mjs');
+
+  const cliPath = findCodebuddyCli();
+  if (!cliPath) {
+    return { ok: false, reason: '未找到 CodeBuddy CLI，请确认 WorkBuddy 已安装。' };
+  }
+
+  const cwd = last.cwd && last.cwd !== '未知目录' ? last.cwd : process.cwd();
+  const { command, args } = buildCodebuddyArgs(text, last.session_id, cliPath);
+  const proc = await spawnCli({ command, args, cwd, timeoutMs: config.resumeTimeout * 1000 }, { wrapCmd: false, writeStdin: false });
+
+  if (!proc.ok) return { ok: false, reason: proc.reason };
+
+  let reply = extractCodebuddyReply(proc.stdout) || extractReply(proc.stdout) || extractReply(proc.stderr);
+  let message;
+  if (proc.timedOut) {
+    onLog(`续聊超时（超过 ${config.resumeTimeout} 秒）已中断`);
+    message = reply
+      ? `续聊超时已中断（以下为超时前已生成的回复）\n\n${reply}`
+      : `续聊超时，未获取到回复。`;
+  } else {
+    message = reply
+      ? `续聊已完成（退出码 ${proc.code}）\n\n${reply}`
+      : `续聊已完成（退出码 ${proc.code}，无文本输出）`;
+  }
+  await sendNotification({ ...config, title: 'CodeBuddy', message });
+  return { ok: true, code: proc.code };
+}
+
 // 执行一次续聊，返回 { ok, reason?, code? }
 export async function runResume(text, { config = null, onLog = (s) => {} } = {}) {
   config = config || loadConfig();
@@ -237,7 +268,7 @@ export async function runResume(text, { config = null, onLog = (s) => {} } = {})
     }
   }
 
-  if (agent !== 'Claude Code' && agent !== 'Codex' && agent !== 'ZCode') {
+  if (agent !== 'Claude Code' && agent !== 'Codex' && agent !== 'ZCode' && agent !== 'CodeBuddy') {
     return { ok: false, reason: `续聊暂不支持 ${agent} 会话。` };
   }
   const textClean = (text || '').trim();
@@ -251,6 +282,18 @@ export async function runResume(text, { config = null, onLog = (s) => {} } = {})
     if (lockedOut) setMode('out');
     try {
       return await runZcodeResume(textClean, { config, onLog, last });
+    } finally {
+      if (lockedOut) setMode(prevMode);
+    }
+  }
+
+  // CodeBuddy 续聊：headless 调 codebuddy CLI（-p/--resume/--output-format json）
+  if (agent === 'CodeBuddy') {
+    const prevMode = readMode();
+    const lockedOut = prevMode !== 'out';
+    if (lockedOut) setMode('out');
+    try {
+      return await runCodebuddyResume(textClean, { config, onLog, last });
     } finally {
       if (lockedOut) setMode(prevMode);
     }
