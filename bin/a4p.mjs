@@ -22,7 +22,7 @@ const SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json');
 migrateLegacy();
 
 function showHelp() {
-  console.log('a4phone — Claude Code / Codex / DSH 远程手机交互\n');
+  console.log('a4phone — Claude Code / Codex / ZCode / DSH 远程手机交互\n');
   console.log('用法:');
   console.log('  a4p setup       安装引导（生成话题、注册 Hook、为全部 DSH profile 挂载插件、显示二维码）');
   console.log('  a4p out         外出模式（手机优先）');
@@ -96,15 +96,15 @@ if (cmd === '--version' || cmd === '-v' || cmd === 'version') {
   } catch {
     process.exit(0);
   }
-  // 可选的 agent 标识：a4p hook [codex|claude]，默认 claude
-  const agent = process.argv[3] === 'codex' ? 'codex' : 'claude';
+  // 可选的 agent 标识：a4p hook [codex|zcode|claude]，默认 claude
+  const agent = ['codex', 'zcode'].includes(process.argv[3]) ? process.argv[3] : 'claude';
   const { dispatchHook } = await import('../src/hook.mjs');
   const result = await dispatchHook(input, agent);
   if (result) {
     process.stdout.write(JSON.stringify(result) + '\n');
   }
 } else if (cmd === 'uninstall') {
-  const { unregisterHooks, unconfigureCodex, unconfigureDsh } = await import('../src/setup.mjs');
+  const { unregisterHooks, unconfigureCodex, unconfigureZcode, unconfigureDsh } = await import('../src/setup.mjs');
   const { stopDaemon } = await import('../src/daemon.mjs');
   const { disableAutostart } = await import('../src/autostart.mjs');
   // 先停守护进程：Windows 上守护进程持有 daemon.log 句柄，直接删目录会失败且异常被静默吞掉
@@ -112,13 +112,14 @@ if (cmd === '--version' || cmd === '-v' || cmd === 'version') {
   disableAutostart();
   unregisterHooks(SETTINGS_PATH);
   unconfigureCodex();
+  unconfigureZcode();
   unconfigureDsh();
   // 新版 ~/.a4phone/ 目录 + 旧版家目录散点文件一并清理
   try { fs.rmSync(A4P_DIR, { recursive: true, force: true }); } catch {}
   for (const f of ['.a4phone.json', '.a4phone-mode.json', '.a4phone-last.json', '.a4phone-daemon.json', '.a4phone-daemon.log']) {
     try { fs.unlinkSync(path.join(os.homedir(), f)); } catch {}
   }
-  console.log('a4phone 已卸载：Claude Code / Codex / DSH Hook 已移除，开机自启与配置已删除。');
+  console.log('a4phone 已卸载：Claude Code / Codex / ZCode / DSH Hook 已移除，开机自启与配置已删除。');
 } else if (cmd === 'autostart') {
   const { enableAutostart, disableAutostart, isAutostartEnabled } = await import('../src/autostart.mjs');
   const mode = process.argv[3];

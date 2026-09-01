@@ -1,6 +1,6 @@
-// unregisterHooks / configureCodex / unconfigureCodex 单元测试：
+// unregisterHooks / configureCodex / unconfigureCodex / configureZcode 单元测试：
 //   卸载不重写无 a4phone Hook 的 settings.json、保留用户 Hook、
-//   Codex 配置可配置/卸载往返、features hooks 空壳清理
+//   Codex 配置可配置/卸载往返、features hooks 空壳清理、ZCode 配置往返
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
@@ -10,6 +10,8 @@ import {
   unregisterHooks,
   configureCodex,
   unconfigureCodex,
+  configureZcode,
+  unconfigureZcode,
   stripFeaturesHooksShell,
 } from '../src/setup.mjs';
 
@@ -98,6 +100,62 @@ test('configureCodex → unconfigureCodex 往返：已有 [features] 且含其�
   assert.ok(restored.includes('dynamic_time_range = false'), '用户 features 键应保留');
   assert.ok(restored.includes('hooks = true'), '用户有 hooks = true（非空壳）时保留');
   assert.ok(restored.includes('provider = "openai"'), '[model] 表应保留');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('configureZcode → unconfigureZcode 往返：写入 events 与 enabled，卸载恢复且保留用户配置', () => {
+  const dir = tmpdir();
+  const p = path.join(dir, 'config.json');
+  const original = { mcp: { servers: { fs: { command: 'node' } } }, hooks: { events: {} } };
+  fs.writeFileSync(p, JSON.stringify(original, null, 2));
+
+  assert.equal(configureZcode(p), true, '首次配置应写入');
+  const configured = JSON.parse(fs.readFileSync(p, 'utf-8'));
+  assert.equal(configured.hooks.enabled, true, '配置文件 Hook 默认禁用，应显式开启');
+  const str = JSON.stringify(configured);
+  assert.ok(str.includes('a4p hook zcode'), '配置应含 a4phone Hook');
+  for (const ev of ['Stop', 'PreToolUse', 'PermissionRequest']) {
+    assert.ok(configured.hooks.events[ev], `${ev} 事件应写入`);
+  }
+  assert.ok(configured.mcp?.servers?.fs, '用户 mcp 配置应保留');
+
+  assert.equal(configureZcode(p), false, '重复配置应幂等跳过');
+
+  assert.equal(unconfigureZcode(p), true, '卸载应改写');
+  const restored = JSON.parse(fs.readFileSync(p, 'utf-8'));
+  assert.ok(!JSON.stringify(restored).includes('a4p hook zcode'), '卸载后不应再有 a4phone Hook');
+  assert.ok(restored.mcp?.servers?.fs, '用户 mcp 配置应保留');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('unconfigureZcode 无 a4phone Hook 时不重写文件（保留原格式）', () => {
+  const dir = tmpdir();
+  const p = path.join(dir, 'config.json');
+  const original = '{"hooks":{"enabled":true,"events":{"Stop":[{"matcher":"x","hooks":[{"type":"command","command":"echo hi"}]}]}}}\n';
+  fs.writeFileSync(p, original);
+
+  assert.equal(unconfigureZcode(p), false, '无 a4phone Hook 时应返回 false（未改写）');
+  assert.equal(fs.readFileSync(p, 'utf-8'), original, '文件应原样保留，不被格式化');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('configureZcode：Hook 已存在但 runner 被禁用时仍补开 enabled', () => {
+  const dir = tmpdir();
+  const p = path.join(dir, 'config.json');
+  const input = {
+    hooks: {
+      enabled: false,
+      events: {
+        Stop: [{ matcher: '*', hooks: [{ type: 'command', command: 'a4p hook zcode' }] }],
+      },
+    },
+  };
+  fs.writeFileSync(p, JSON.stringify(input, null, 2));
+
+  assert.equal(configureZcode(p), true, 'enabled 修正应算一次写入');
+  const out = JSON.parse(fs.readFileSync(p, 'utf-8'));
+  assert.equal(out.hooks.enabled, true, '应补开 enabled');
+  assert.equal(out.hooks.events.Stop.length, 1, '已存在的 Hook 不应重复追加');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

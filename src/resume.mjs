@@ -128,12 +128,14 @@ export function forkCodexSession({ sessionId, transcriptPath }) {
 }
 
 // 等待 CLI 进程结束，返回 { ok, code, stdout, stderr, reason, timedOut }
-function spawnCli({ command, args, cwd, input, timeoutMs }) {
+// opts.wrapCmd=false：直接 spawn command（Windows 下跳过 cmd /c 包装，避免参数引号被破坏）
+// opts.writeStdin=false：不写 stdin（如 ZCode 用 --prompt 传消息）
+function spawnCli({ command, args, cwd, input, timeoutMs }, opts = {}) {
   return new Promise((resolve) => {
-    const useCmd = process.platform === 'win32';
+    const wrapCmd = opts.wrapCmd !== false && process.platform === 'win32';
     // 用 ComSpec 全路径启动 cmd，避免依赖 PATH 里能找到 cmd（沙箱/受限环境可能没有）
-    const cmd = useCmd ? process.env.ComSpec || 'cmd' : command;
-    const cmdArgs = useCmd ? ['/c', command, ...args] : args;
+    const cmd = wrapCmd ? process.env.ComSpec || 'cmd' : command;
+    const cmdArgs = wrapCmd ? ['/c', command, ...args] : args;
     let child;
     try {
       // A4P_RESUME 标记：让 Stop Hook 识别这是续聊子进程，避免重复推送"任务已完成"
@@ -147,7 +149,7 @@ function spawnCli({ command, args, cwd, input, timeoutMs }) {
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
-      if (useCmd) {
+      if (process.platform === 'win32') {
         const taskkill = path.join(process.env.WINDIR || 'C:\\Windows', 'System32', 'taskkill.exe');
         spawn(taskkill, ['/pid', String(child.pid), '/f', '/t']).on('error', () => child.kill());
       } else {
@@ -164,11 +166,51 @@ function spawnCli({ command, args, cwd, input, timeoutMs }) {
       clearTimeout(timer);
       resolve({ ok: true, code, stdout, stderr, timedOut });
     });
-    try {
-      child.stdin.write(input + '\n');
-      child.stdin.end();
-    } catch {}
+    if (opts.writeStdin !== false && input != null) {
+      try {
+        child.stdin.write(input + '\n');
+        child.stdin.end();
+      } catch {}
+    }
   });
+}
+
+// ZCode 续聊：headless 调 zcode CLI 续聊指定会话，回推回复到手机
+async function runZcodeResume(text, { config, onLog, last }) {
+  const { findZcodeCli, ensureZcodeModelConfig, buildZcodeArgs, extractZcodeReply } = await import('./zcode.mjs');
+
+  const cliPath = findZcodeCli();
+  if (!cliPath) {
+    return { ok: false, reason: '未找到 ZCode CLI（zcode.cjs），请确认 ZCode 桌面端已安装。' };
+  }
+
+  // 同步会话当前模型到 cli/config.json（桌面端切换模型后，续聊跟随会话实际模型）
+  const synced = ensureZcodeModelConfig({ sessionId: last.session_id });
+  if (!synced.ok) {
+    onLog(`ZCode 模型配置同步失败：${synced.reason}`);
+    return { ok: false, reason: `ZCode 模型配置同步失败：${synced.reason}` };
+  }
+
+  const cwd = last.cwd && last.cwd !== '未知目录' ? last.cwd : process.cwd();
+  const { command, args } = buildZcodeArgs(text, last.session_id, cwd, cliPath);
+  const proc = await spawnCli({ command, args, cwd, timeoutMs: config.resumeTimeout * 1000 }, { wrapCmd: false, writeStdin: false });
+
+  if (!proc.ok) return { ok: false, reason: proc.reason };
+
+  let reply = extractZcodeReply(proc.stdout) || extractReply(proc.stdout) || extractReply(proc.stderr);
+  let message;
+  if (proc.timedOut) {
+    onLog(`续聊超时（超过 ${config.resumeTimeout} 秒）已中断`);
+    message = reply
+      ? `续聊超时已中断（以下为超时前已生成的回复）\n\n${reply}`
+      : `续聊超时，未获取到回复。`;
+  } else {
+    message = reply
+      ? `续聊已完成（退出码 ${proc.code}）\n\n${reply}`
+      : `续聊已完成（退出码 ${proc.code}，无文本输出）`;
+  }
+  await sendNotification({ ...config, title: 'ZCode', message });
+  return { ok: true, code: proc.code };
 }
 
 // 执行一次续聊，返回 { ok, reason?, code? }
@@ -195,11 +237,24 @@ export async function runResume(text, { config = null, onLog = (s) => {} } = {})
     }
   }
 
-  if (agent !== 'Claude Code' && agent !== 'Codex') {
+  if (agent !== 'Claude Code' && agent !== 'Codex' && agent !== 'ZCode') {
     return { ok: false, reason: `续聊暂不支持 ${agent} 会话。` };
   }
   const textClean = (text || '').trim();
   if (!textClean) return { ok: false, reason: '续聊内容为空。' };
+
+  // ZCode 续聊：headless 调用 zcode CLI（--prompt/--resume），
+  // 续聊前自动同步会话当前模型到 ~/.zcode/cli/config.json（桌面端切换模型后跟随）。
+  if (agent === 'ZCode') {
+    const prevMode = readMode();
+    const lockedOut = prevMode !== 'out';
+    if (lockedOut) setMode('out');
+    try {
+      return await runZcodeResume(textClean, { config, onLog, last });
+    } finally {
+      if (lockedOut) setMode(prevMode);
+    }
+  }
 
   // 续聊期间锁定外出模式（人在手机端），结束后恢复原模式
   const prevMode = readMode();

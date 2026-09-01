@@ -13,6 +13,7 @@ import { runResume } from './resume.mjs';
 import { createBatcher } from './batcher.mjs';
 import { checkForUpdate, makePhoneNotifier } from './update-check.mjs';
 import { parseNtfyMessage } from './ntfy.mjs';
+import { processNotifyQueue } from './notify.mjs';
 import { PENDING_PATH, ensureDir } from './paths.mjs';
 import { configureDsh } from './setup.mjs';
 
@@ -21,6 +22,8 @@ const RETRY_DELAY = 5000;
 // DSH profile 自动发现扫描间隔：新装 profile（如后续安装的 tui/dsh-tui 变体）
 // 无需重跑 a4p setup，守护进程周期重扫自动补挂
 const PROFILE_SCAN_INTERVAL_MS = 10 * 60 * 1000;
+// 桌面通知队列扫描间隔：hook 写请求文件后，守护进程尽快代发（不阻塞续聊循环）
+const NOTIFY_SCAN_INTERVAL_MS = 2000;
 
 /**
  * 扫描 ~/.dsh/profiles 并为所有 profile 补挂 dsh-hook（幂等），
@@ -150,6 +153,12 @@ export async function runListen({ onLog = (s) => console.log(s) } = {}) {
   // ── DSH profile 自动发现：启动时 + 周期扫描，新装 profile 自动补挂插件 ──
   ensureDshProfiles(onLog);
   setInterval(() => { ensureDshProfiles(onLog); }, PROFILE_SCAN_INTERVAL_MS).unref();
+
+  // ── 桌面通知队列代发：hook 进程（尤其 ZCode）退出时会被执行端口杀进程树，
+  //    fire-and-forget 的气泡来不及渲染；由常驻守护进程读取请求并弹窗 ──
+  setInterval(() => {
+    try { processNotifyQueue(); } catch {}
+  }, NOTIFY_SCAN_INTERVAL_MS).unref();
 
   while (true) {
     try {

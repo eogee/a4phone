@@ -23,6 +23,9 @@ export const DSH_HEARTBEAT = path.join(A4P_DIR, 'dsh-heartbeat.json');
 // 续聊积压批次持久化：长轮次期间到达的消息写入该文件，守护进程重启后恢复，
 // 避免积压消息在重启时丢失
 export const PENDING_PATH = path.join(A4P_DIR, 'pending-batch.json');
+// 桌面通知请求队列：hook 进程写请求文件（ZCode 执行端口会在 hook 退出时杀进程树，
+// fire-and-forget 的气泡来不及显示），常驻续聊守护进程读取并代发
+export const NOTIFY_QUEUE_DIR = path.join(A4P_DIR, 'notify-queue');
 // 版本更新检查缓存：{ lastCheck, knownLatest }，用于限频与"同一新版本只提醒一次"
 export const UPDATE_CACHE_PATH = path.join(A4P_DIR, 'update-cache.json');
 

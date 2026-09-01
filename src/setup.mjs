@@ -258,6 +258,77 @@ export function unconfigureCodex(codexPath = CODEX_PATH) {
   }
 }
 
+// ── ZCode Hook 注册 ─────────────────────────────────────────────────
+// ZCode 的 Hook 配置在 ~/.zcode/cli/config.json，形状为
+// { hooks: { enabled, events: { <Event>: [ { matcher?, hooks: [...] } ] } } }。
+// 与 Claude Code 的差异：事件块挂在 hooks.events 下，且配置文件 Hook 默认禁用，
+// 必须显式 hooks.enabled: true 才会运行（plugin Hook 除外）。
+const ZCODE_CONFIG_PATH = path.join(os.homedir(), '.zcode', 'cli', 'config.json');
+const ZCODE_HOOK_COMMAND = 'a4p hook zcode';
+
+export function configureZcode(zcodePath = ZCODE_CONFIG_PATH, hookCmd = ZCODE_HOOK_COMMAND) {
+  let config = {};
+  try { config = JSON.parse(fs.readFileSync(zcodePath, 'utf-8')); } catch {}
+  config.hooks = config.hooks && typeof config.hooks === 'object' ? config.hooks : {};
+  // 记录 enabled 是否有变化，避免"Hook 已配置但 runner 被禁用"时误判为无需写入
+  let changed = config.hooks.enabled !== true;
+  config.hooks.enabled = true;
+  const events = config.hooks.events && typeof config.hooks.events === 'object' ? config.hooks.events : {};
+
+  const eventBlocks = {
+    Stop: [{ matcher: '*', hooks: [{ type: 'command', command: hookCmd }] }],
+    PreToolUse: [{ matcher: 'AskUserQuestion', hooks: [{ type: 'command', command: hookCmd }] }],
+    PermissionRequest: [{ matcher: '*', hooks: [{ type: 'command', command: hookCmd }] }],
+  };
+
+  for (const [event, blocks] of Object.entries(eventBlocks)) {
+    // 兼容既有配置：事件值可能是数组，也可能被手写成单个对象
+    const raw = events[event];
+    const list = Array.isArray(raw) ? raw : raw && typeof raw === 'object' ? [raw] : [];
+    const alreadyConfigured = list.some((b) =>
+      (b.hooks || []).some((h) => h.command === hookCmd)
+    );
+    if (alreadyConfigured) continue;
+    list.push(...blocks);
+    events[event] = list;
+    changed = true;
+  }
+  config.hooks.events = events;
+
+  if (!changed) return false;
+  fs.mkdirSync(path.dirname(zcodePath), { recursive: true });
+  fs.writeFileSync(zcodePath, JSON.stringify(config, null, 2));
+  return true;
+}
+
+export function unconfigureZcode(zcodePath = ZCODE_CONFIG_PATH) {
+  let config = {};
+  try { config = JSON.parse(fs.readFileSync(zcodePath, 'utf-8')); } catch {}
+  const hooks = config.hooks;
+  if (!hooks || typeof hooks !== 'object' || !hooks.events) return false;
+  const events = hooks.events;
+  let changed = false;
+  // 只移除 a4phone 的 Hook，保留用户的其他 Hook 与其他事件
+  const isA4p = (b) => (b.hooks || []).some((h) => (h.command || '').includes('a4p hook zcode'));
+  for (const event of Object.keys(events)) {
+    const entry = events[event];
+    if (!Array.isArray(entry)) {
+      // 手写的单对象条目（非数组）：仅当本身含 a4phone Hook 时才删除，否则原样保留
+      if (entry && typeof entry === 'object' && isA4p(entry)) { delete events[event]; changed = true; }
+      continue;
+    }
+    const kept = entry.filter((b) => !isA4p(b));
+    if (kept.length !== entry.length) changed = true;
+    if (kept.length) events[event] = kept;
+    else delete events[event];
+  }
+  if (!changed) return false; // 没有 a4phone 的 Hook：保持用户文件原样，不重写
+  if (Object.keys(events).length === 0) delete hooks.events;
+  if (Object.keys(hooks).length === 0) delete config.hooks;
+  fs.writeFileSync(zcodePath, JSON.stringify(config, null, 2));
+  return true;
+}
+
 // ── DSH（DeepSeek Harness）Hook 插件挂载 ─────────────────────────────
 // 复用本包 dsh/ 插件（Cordis 插件，监听 DSH 会话事件与工具/审批管线），
 // 以 insert 形式追加到各 profile 的 cordis.patch.yml（热生效，无需重启）。
@@ -404,7 +475,18 @@ export async function runSetup({ generateQR }) {
 
   const claudeConfigured = registerHooks(SETTINGS_PATH, hookCommand());
   const codexConfigured = configureCodex();
+  const zcodeConfigured = configureZcode();
   const dshResult = configureDsh();
+
+  // ZCode 远程续聊：把默认模型配置写入 ~/.zcode/cli/config.json
+  // （headless 续聊必需；每次续聊前还会按会话实际模型自动同步）
+  let zcodeModelStatus = '未配置（未检测到 ZCode 模型注册表）';
+  try {
+    const { ensureZcodeModelConfig } = await import('./zcode.mjs');
+    const synced = ensureZcodeModelConfig();
+    if (synced.ok) zcodeModelStatus = '已写入默认模型配置（续聊时按会话实际模型自动同步）';
+    else zcodeModelStatus = `未配置：${synced.reason}`;
+  } catch {}
 
   const subscribeUrl = `${config.server}/${config.topic}`;
   const ntfyUrl = `ntfy://${new URL(config.server).host}/${config.topic}`;
@@ -421,6 +503,8 @@ export async function runSetup({ generateQR }) {
   process.stdout.write('\n在 ntfy App 添加订阅，输入话题名称或扫描上方二维码。\n');
   process.stdout.write(`Claude Code 配置：${claudeConfigured ? '已自动写入 ~/.claude/settings.json' : '已存在，跳过'}\n`);
   process.stdout.write(`Codex 配置：${codexConfigured ? '已自动写入 ~/.codex/config.toml' : '已存在，跳过'}\n`);
+  process.stdout.write(`ZCode 配置：${zcodeConfigured ? '已自动写入 ~/.zcode/cli/config.json' : '已存在，跳过'}\n`);
+  process.stdout.write(`ZCode 续聊模型：${zcodeModelStatus}\n`);
   let dshStatus;
   if (!fs.existsSync(DSH_PROFILES_DIR)) {
     dshStatus = '未检测到 DSH 环境（~/.dsh/profiles），跳过';
@@ -434,7 +518,7 @@ export async function runSetup({ generateQR }) {
   }
   process.stdout.write(`DSH 配置：${dshStatus}\n`);
   process.stdout.write('模式切换：a4p out（外出/手机优先） / a4p home（终端优先） / a4p status\n');
-  process.stdout.write('重启 Claude Code / Codex 会话后 Hook 生效（DSH 插件热生效，无需重启）。\n');
+  process.stdout.write('重启 Claude Code / Codex / ZCode 会话后 Hook 生效（DSH 插件热生效，无需重启）。\n');
 
   // 默认启动续聊守护进程 + 注册开机自启（失败不阻塞 setup，给出提示）
   try {

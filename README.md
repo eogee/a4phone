@@ -2,7 +2,7 @@
 
 # a4phone
 
-DSH（DeepSeek Harness）/ Claude Code / Codex 远程手机交互包。通过 [ntfy.sh](https://ntfy.sh) 在手机上接收任务完成通知（含 AI 最后输出），对 AI 提问与权限请求进行远程点选或文字作答，并可从手机直接继续对话。
+DSH（DeepSeek Harness）/ Claude Code / Codex / ZCode 远程手机交互包。通过 [ntfy.sh](https://ntfy.sh) 在手机上接收任务完成通知（含 AI 最后输出），对 AI 提问与权限请求进行远程点选或文字作答，并可从手机直接继续对话。
 
 ## 功能
 
@@ -10,9 +10,10 @@ DSH（DeepSeek Harness）/ Claude Code / Codex 远程手机交互包。通过 [n
 - **AI 提问交互**：`AskUserQuestion`（Codex 为 `request_user_input`，DSH 为 `ask_user_question`）→ 手机显示选项按钮点选，也可直接发送文字自由作答
 - **权限请求交互**：`PermissionRequest` → 手机 Approve/Deny/Always Approve
 - **DSH 一键挂载**：`a4p setup` 自动把内置 `dsh-hook` 插件挂到 DSH **全部已装 profile**（web / tui / dsh-tui 等），守护进程周期扫描、新装 profile 自动补挂，让 DeepSeek Harness 同样具备手机交互
-- **远程续聊**：守护进程监听主话题，手机发文字即可与当前会话交流，形成完整远程对话闭环（DSH / Claude Code / Codex）
+- **远程续聊**：守护进程监听主话题，手机发文字即可与当前会话交流，形成完整远程对话闭环（DSH / Claude Code / Codex / ZCode）
 - **DSH 远程续聊**：手机发文字直接注入 DSH 正在运行的会话（`agent.followup`），手机消息与 AI 回复**实时出现在桌面端会话里**，无需另起进程、无会话锁冲突
 - **后台守护进程**：`a4p listen` 无窗口后台运行，日志写入文件
+- **桌面弹窗守护进程代发**：提问 / 权限请求 / 任务完成的电脑弹窗统一由常驻守护进程弹出（hook 进程——尤其 ZCode——退出时会被执行端口杀掉整棵进程树，hook 内直接弹来不及显示；守护进程在进程树之外，稳定可靠且不增加 hook 延迟）
 - **自动更新提醒**：守护进程周期检查 npm 新版本并**推送手机提醒**；其他命令发现新版本时终端提示 + 手机推送（默认开启，可在配置关闭）
 - **双模式**：外出模式（手机优先）/ 终端优先模式，一键切换
 - **零第三方依赖**：仅依赖 ntfy.sh 免费服务，无 Google 服务依赖
@@ -47,13 +48,13 @@ a4p help         # 显示帮助
 `a4p setup` 自动完成：
 
 1. 生成独一无二的话题名称（如 `a4p-xxxx`），写入 `~/.a4phone/config.json`
-2. 在 `~/.claude/settings.json` 注册三个 Hook（Stop / AskUserQuestion / PermissionRequest），并同时写入 `~/.codex/config.toml` 的 Codex Hook（见下文 [Codex](#codex) 一节）
+2. 在 `~/.claude/settings.json` 注册三个 Hook（Stop / AskUserQuestion / PermissionRequest），同时写入 `~/.codex/config.toml` 的 Codex Hook（见下文 [Codex](#codex) 一节）与 `~/.zcode/cli/config.json` 的 ZCode Hook（见下文 [ZCode](#zcode) 一节）
 3. 检测到 DSH 环境时，把内置 `dsh-hook` 插件挂载到 `~/.dsh/profiles/` 下**所有 profile** 的 `cordis.patch.yml`（web / tui / dsh-tui 等；守护进程后续每 10 分钟重扫，新装 profile 自动补挂，见下文 [DSH](#dshdeepseek-harness) 一节）
 4. **默认启动续聊守护进程**（`a4p listen` 后台运行）
 5. **默认注册开机自启**（Windows 启动文件夹写入隐藏 VBS，登录时自动运行守护进程）
 6. 在终端显示二维码
 
-然后用手机 ntfy App 扫描二维码或输入话题名称订阅；DSH 插件热生效无需重启，重启 Claude Code / Codex 会话后 Hook 生效。
+然后用手机 ntfy App 扫描二维码或输入话题名称订阅；DSH 插件热生效无需重启，重启 Claude Code / Codex / ZCode 会话后 Hook 生效。
 
 > 开机自启无需管理员权限（当前用户启动文件夹），可用 `a4p autostart --off` 关闭、`--on` 重新开启；`a4p uninstall` 会一并移除。WSL/Linux 暂不支持自动注册，可手动用 tmux / systemd 常驻。
 
@@ -66,6 +67,16 @@ a4p status     # 查看当前模式
 ```
 
 > 切换即时生效，无需重启会话。
+
+### 桌面弹窗
+
+AI 提问、权限请求、任务完成时的**电脑弹窗**统一由**常驻续聊守护进程**（`a4p listen`）代发：
+
+1. hook / DSH 插件触发时，把通知请求原子写入 `~/.a4phone/notify-queue/`（而不是 hook 进程里直接弹窗）
+2. 守护进程每 2 秒扫描队列，逐条弹出后删除请求文件；守护进程停运期间积压超过 60 秒的请求自动丢弃，避免恢复后批量轰炸
+3. 守护进程不在运行时回退为直接弹窗（Claude Code / Codex / DSH 的宿主进程常驻，直接弹可正常显示）
+
+这样做的原因：**ZCode 的执行端口会在 hook 命令退出时杀掉整棵进程树**，hook 内 fire-and-forget 的气泡来不及渲染（已实测：hook 进程存活时气泡可见、一退出即被掐断）；改由 hook 进程树之外的守护进程弹出则稳定可靠，且不增加 hook 延迟（对 Claude Code / Codex 也无副作用）。
 
 ### AI 最后输出
 
@@ -91,7 +102,7 @@ a4p status     # 查看当前模式
 
 2. 手机 ntfy App 已订阅主话题 `{topic}`（`a4p setup` 生成，扫描二维码即可），向该话题发送任意文字即可。
 
-3. 守护进程收到手机消息后，按最近会话的 agent 执行续聊（DSH：经文件队列交给 `dsh web` 进程内的插件直接 `followup` 到当前 live 会话；Claude Code：`claude --resume <会话> --continue -p`；Codex：`codex exec resume <会话> -o <临时文件> -`，`-o` 捕获最后一条回复）。均为 headless，捕获回复后推回手机。Codex 会话若被窗口占用（thread-store conflict），a4phone 会自动把它 fork 成新线程续聊——**不需要关闭原窗口**，原会话原样保留，手机对话在 fork 上继续。
+3. 守护进程收到手机消息后，按最近会话的 agent 执行续聊（DSH：经文件队列交给 `dsh web` 进程内的插件直接 `followup` 到当前 live 会话；Claude Code：`claude --resume <会话> --continue -p`；Codex：`codex exec resume <会话> -o <临时文件> -`，`-o` 捕获最后一条回复；ZCode：headless 调 `zcode.cjs --prompt <消息> --resume <会话> --json`，从 JSON 的 `response` 字段取回复）。均为 headless，捕获回复后推回手机。Codex 会话若被窗口占用（thread-store conflict），a4phone 会自动把它 fork 成新线程续聊——**不需要关闭原窗口**，原会话原样保留，手机对话在 fork 上继续。
 
 4. 无需守护进程时，也可在电脑上手动续聊：
 
@@ -105,7 +116,9 @@ a4p status     # 查看当前模式
    a4p last
    ```
 
-> 续聊完全 headless 运行（无需窗口标题匹配、前台焦点或剪贴板，也不依赖你当前是否开着终端），支持 DSH、Claude Code 与 Codex 会话（按最近会话的 agent 自动选择续聊方式）。续聊回合内若再次触发提问/权限请求，仍会推送手机，形成完整的远程对话闭环。
+> 续聊完全 headless 运行（无需窗口标题匹配、前台焦点或剪贴板，也不依赖你当前是否开着终端），支持 DSH、Claude Code、Codex 与 ZCode 会话（按最近会话的 agent 自动选择续聊方式）。续聊回合内若再次触发提问/权限请求，仍会推送手机，形成完整的远程对话闭环。
+>
+> **ZCode 续聊的模型跟随**：ZCode 的模型/provider 由桌面 app 管理（`~/.zcode/v2/config.json`），headless 续聊需要 `~/.zcode/cli/config.json` 里有显式模型配置。a4phone 在每次续聊前从该会话的 rollout 记录读取**会话实际使用的模型**，并自动同步到 `~/.zcode/cli/config.json` —— 你在桌面端切换模型后，续聊自动跟随切换后的模型（`a4p setup` 会先写入一个默认配置）。
 >
 > **积压合并**：一轮续聊最长可达 `resumeTimeout`（默认 30 分钟），期间手机连续发来的消息会自动**合并为一个批次**一次性续聊（不再逐条排队、每条一个独立轮次），保证手机内容一定能送达 AI；积压批次持久化到 `~/.a4phone/pending-batch.json`，守护进程重启/崩溃后自动恢复，不丢消息。
 
@@ -137,6 +150,30 @@ command = "a4p hook codex"
 > 注意：启用项必须放在 `[features]` 表内（`[features] hooks = true`），不能写成根级别的裸 `hooks = true`，否则与 `[[hooks.*]]` 冲突导致 TOML 解析错误。Codex 会话中需运行 `/hooks` 并手动信任新 Hook。
 >
 > Codex 的提问工具叫 `request_user_input`（不是 `AskUserQuestion`），PreToolUse 的 matcher 必须匹配该名称 hook 才会触发。Codex 端无法像 Claude Code 那样用 `updatedInput` 注入答案，a4phone 采用"阻断工具调用、把手机答案写进阻断原因"的方式，让模型看到答案后直接采用继续。
+
+## ZCode
+
+`a4p setup` 会同时自动配置 ZCode。Hook 写入 `~/.zcode/cli/config.json`（保留原有 MCP、插件等设置）。与 Claude Code 不同，ZCode 的事件块挂在 `hooks.events` 下，且配置文件 Hook 默认禁用，必须 `hooks.enabled: true` 才会运行（a4phone 写入时自动补上）：
+
+```json
+{
+  "hooks": {
+    "enabled": true,
+    "events": {
+      "Stop": [ { "matcher": "*", "hooks": [ { "type": "command", "command": "a4p hook zcode" } ] } ],
+      "PreToolUse": [ { "matcher": "AskUserQuestion", "hooks": [ { "type": "command", "command": "a4p hook zcode" } ] } ],
+      "PermissionRequest": [ { "matcher": "*", "hooks": [ { "type": "command", "command": "a4p hook zcode" } ] } ]
+    }
+  }
+}
+```
+
+ZCode 支持的事件与 Claude Code 一致（`Stop` / `PreToolUse` / `PermissionRequest`），提问工具也叫 `AskUserQuestion`。与 Claude Code 有两个关键差异：
+
+- **提问触发两次 hook**：ZCode 对一次 `AskUserQuestion` 会同时触发 `PreToolUse` 和 `PermissionRequest` 两个 hook。a4phone 只在 `PreToolUse` 分支弹「有提问需要处理」提醒（`PermissionRequest` 分支对提问跳过弹窗，避免重复通知和误导性的「有权限请求需要处理」文案）；外出模式下两者配合完成手机作答——提问走 asku 注入答案（`updatedInput.answers`），权限请求自动放行（`decision.behavior: "allow"`），与 ZCode 的 hook 输出 schema 兼容。
+- **桌面弹窗需守护进程代发**：ZCode 的执行端口会在 hook 命令退出时杀掉整棵进程树，hook 内直接弹窗来不及渲染。因此桌面弹窗统一由常驻守护进程从 `~/.a4phone/notify-queue/` 队列代发（见 [桌面弹窗](#桌面弹窗)），**ZCode 的桌面提醒依赖守护进程在运行**（`a4p setup` 默认启动并注册开机自启；`a4p listen --status` 可随时查看状态）。
+
+> 重启 ZCode 会话后 Hook 生效。提问与权限请求的桌面弹窗在 home / out 模式下均会触发；手机点选仅外出模式参与。**远程续聊已支持 ZCode 会话**（headless 调 zcode CLI，见 [远程续聊](#远程续聊)）；`a4p uninstall` 会一并移除 ZCode Hook。
 
 ## DSH（DeepSeek Harness）
 
@@ -189,7 +226,7 @@ command = "a4p hook codex"
 
 ## 原理
 
-DSH 插件与 Hook（Claude Code / Codex）拦截事件后，通过 ntfy.sh 推送带按钮的通知到手机；手机点选或发送文字后，决策经响应话题回传并注入会话。`Stop` 事件同时把 AI 最后输出从会话记录中抽取出来推送手机。
+DSH 插件与 Hook（Claude Code / Codex / ZCode）拦截事件后，通过 ntfy.sh 推送带按钮的通知到手机；手机点选或发送文字后，决策经响应话题回传并注入会话。`Stop` 事件同时把 AI 最后输出从会话记录中抽取出来推送手机。电脑弹窗则由常驻守护进程从 `~/.a4phone/notify-queue/` 队列代发（见 [桌面弹窗](#桌面弹窗)）。
 
 ```
 AI助手触发事件 → a4p hook → ntfy.sh 推送手机 → 手机点选/文字作答 → 决策回传 → 注入会话
@@ -203,6 +240,7 @@ AI助手触发事件 → a4p hook → ntfy.sh 推送手机 → 手机点选/文�
            → whenIdle 等待轮次结束 → 提取回复写 resp 文件 → a4p 轮询取回
   → 或 claude --resume <会话> --continue -p（headless，stdin 作为消息）
   → 或 codex exec resume <会话> -o <临时文件> -（Codex，-o 捕获最后一条回复）
+  → 或 node zcode.cjs --prompt <消息> --resume <会话> --json（ZCode，续聊前自动同步会话模型）
   → AI 回复写入会话并回推手机
   →（DSH 续聊直接发生在桌面正在运行的会话上，手机与桌面看到同一段对话）
   →（Codex 会话被窗口占用时自动 fork 新线程续聊，无需关闭原窗口）
@@ -217,7 +255,7 @@ AI助手触发事件 → a4p hook → ntfy.sh 推送手机 → 手机点选/文�
 
 - 需 Node.js 18+，手机端安装 ntfy App
 - 手机订阅后，请在**订阅设置**中开启"即时交付"，否则消息需手动刷新才能收到
-- 续聊支持 DSH、Claude Code 与 Codex 会话（按最近会话的 agent 自动选择方式）；DSH 续聊需 `dsh web` 正在运行且已挂载新版插件；Codex 续聊通过 `codex exec resume` 执行，需 Codex CLI 已登录、hook 已信任
+- 续聊支持 DSH、Claude Code、Codex 与 ZCode 会话（按最近会话的 agent 自动选择方式）；DSH 续聊需 `dsh web` 正在运行且已挂载新版插件；Codex 续聊通过 `codex exec resume` 执行，需 Codex CLI 已登录、hook 已信任；ZCode 续聊需 ZCode 桌面端已安装（自动探测 `zcode.cjs` 路径），续聊前自动同步会话模型到 `~/.zcode/cli/config.json`
 - DSH 支持任务完成通知 / 提问作答 / 权限审批 / 远程续聊（经内置 `dsh-hook` 插件）
 - 续聊期间守护进程会自动临时切换为外出模式，结束后恢复原模式
 - Claude Code 会话同一时间只能被一个进程占用，`--resume` 续聊前请先结束终端里仍在运行的原会话；Codex 会话被占用时 a4phone 会自动 fork 新线程续聊（复制会话为新线程 ID，原窗口不受影响，手机对话在 fork 上继续）
@@ -226,7 +264,7 @@ AI助手触发事件 → a4p hook → ntfy.sh 推送手机 → 手机点选/文�
 - ntfy.sh 公共话题可被知晓话题名的人读写，重要场景建议自建 ntfy 服务或使用访问令牌
 - ntfy.sh 为国外服务，国内网络下长连接可能不稳定
 - **自动更新提醒**：默认开启（`checkUpdates: true`）。守护进程（`a4p listen`）启动时及每 `updateIntervalHours` 小时（默认 6）检查一次 npm registry（npmmirror 优先、官方兜底），发现新版本**推送手机提醒**；其他命令（`a4p status`/`a4p resume` 等）发现新版本时**终端提示 + 手机推送**（与守护进程共用去重缓存，同一版本只提醒一次）。查询失败静默跳过，不影响正常功能；可在 `~/.a4phone/config.json` 设 `checkUpdates: false` 关闭
-- 配置存储于 `~/.a4phone/config.json`，最近会话存储于 `~/.a4phone/last.json`，模式存储于 `~/.a4phone/mode.json`，守护进程信息存储于 `~/.a4phone/daemon.json`，日志写入 `~/.a4phone/daemon.log`；DSH Hook 日志写入 `~/.a4phone/dsh-logs/`，DSH 续聊队列位于 `~/.a4phone/dsh-jobs/`，心跳位于 `~/.a4phone/dsh-heartbeat.json`，更新检查缓存位于 `~/.a4phone/update-cache.json`
+- 配置存储于 `~/.a4phone/config.json`，最近会话存储于 `~/.a4phone/last.json`，模式存储于 `~/.a4phone/mode.json`，守护进程信息存储于 `~/.a4phone/daemon.json`，日志写入 `~/.a4phone/daemon.log`；DSH Hook 日志写入 `~/.a4phone/dsh-logs/`，DSH 续聊队列位于 `~/.a4phone/dsh-jobs/`，心跳位于 `~/.a4phone/dsh-heartbeat.json`，桌面通知队列位于 `~/.a4phone/notify-queue/`，更新检查缓存位于 `~/.a4phone/update-cache.json`
 
 ## 开发
 
