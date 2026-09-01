@@ -12,8 +12,6 @@ import {
   unconfigureCodex,
   configureZcode,
   unconfigureZcode,
-  configureCodebuddy,
-  unconfigureCodebuddy,
   stripFeaturesHooksShell,
 } from '../src/setup.mjs';
 
@@ -178,39 +176,4 @@ test('stripFeaturesHooksShell：仅移除只剩 hooks = true 的空壳表', () =
   // 无 hooks 的普通 [features] 不受影响
   const plain = '[features]\ndynamic_time_range = true\n';
   assert.equal(stripFeaturesHooksShell(plain), plain);
-});
-
-test('configureCodebuddy → unconfigureCodebuddy 往返：写入 hooks 并保留用户配置', () => {
-  const dir = tmpdir();
-  const p = path.join(dir, 'settings.json');
-  const original = { enabledPlugins: { 'docx@codebuddy-plugins-official': true } };
-  fs.writeFileSync(p, JSON.stringify(original, null, 2));
-
-  assert.equal(configureCodebuddy(p), true, '首次配置应写入');
-  const configured = JSON.parse(fs.readFileSync(p, 'utf-8'));
-  const str = JSON.stringify(configured);
-  assert.ok(str.includes('a4p hook codebuddy'), '配置应含 a4phone Hook');
-  for (const ev of ['Stop', 'PreToolUse', 'PermissionRequest']) {
-    assert.ok(configured.hooks[ev], `${ev} 事件应写入`);
-  }
-  assert.ok(configured.enabledPlugins?.['docx@codebuddy-plugins-official'], '用户 enabledPlugins 应保留');
-
-  assert.equal(configureCodebuddy(p), false, '重复配置应幂等跳过');
-
-  assert.equal(unconfigureCodebuddy(p), true, '卸载应改写');
-  const after = JSON.parse(fs.readFileSync(p, 'utf-8'));
-  assert.ok(!JSON.stringify(after).includes('a4p hook codebuddy'), '卸载后不应有 a4phone Hook');
-  assert.ok(after.enabledPlugins?.['docx@codebuddy-plugins-official'], '卸载后用户配置应保留');
-  fs.rmSync(dir, { recursive: true, force: true });
-});
-
-test('unconfigureCodebuddy 无 a4phone Hook 时不重写文件', () => {
-  const dir = tmpdir();
-  const p = path.join(dir, 'settings.json');
-  const original = { hooks: { PreToolUse: [{ matcher: 'Edit', hooks: [{ type: 'command', command: 'echo hi' }] }] } };
-  fs.writeFileSync(p, JSON.stringify(original, null, 2));
-
-  assert.equal(unconfigureCodebuddy(p), false, '无 a4phone Hook 时应返回 false（未改写）');
-  assert.equal(fs.readFileSync(p, 'utf-8'), JSON.stringify(original, null, 2), '文件应原样保留');
-  fs.rmSync(dir, { recursive: true, force: true });
 });

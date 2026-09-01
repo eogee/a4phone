@@ -329,70 +329,6 @@ export function unconfigureZcode(zcodePath = ZCODE_CONFIG_PATH) {
   return true;
 }
 
-// ── CodeBuddy（WorkBuddy 内置 CLI）Hook 注册 ────────────────────────────
-// WorkBuddy 桌面应用内置 CodeBuddy Code CLI（cli/bin/codebuddy），hook 配置在
-// ~/.codebuddy/settings.json（用户级），结构与 Claude Code 相同：
-// { hooks: { <Event>: [ { matcher?, hooks: [...] } ] } }。
-// 事件名 / payload（hook_event_name / tool_name / tool_input / last_assistant_message）
-// 与 Claude Code 同构，实测外部写入直接生效（无需 /hooks 面板审核）。
-// Windows 下 hook 命令强制用 Git Bash 执行（不支持 cmd/PowerShell）。
-const CODEBUDDY_SETTINGS_PATH = path.join(os.homedir(), '.codebuddy', 'settings.json');
-const CODEBUDDY_HOOK_COMMAND = 'a4p hook codebuddy';
-
-export function configureCodebuddy(codebuddyPath = CODEBUDDY_SETTINGS_PATH, hookCmd = CODEBUDDY_HOOK_COMMAND) {
-  let settings = {};
-  try { settings = JSON.parse(fs.readFileSync(codebuddyPath, 'utf-8')); } catch {}
-  settings.hooks = settings.hooks && typeof settings.hooks === 'object' ? settings.hooks : {};
-
-  const eventBlocks = {
-    Stop: [{ matcher: '*', hooks: [{ type: 'command', command: hookCmd }] }],
-    PreToolUse: [{ matcher: 'AskUserQuestion', hooks: [{ type: 'command', command: hookCmd }] }],
-    PermissionRequest: [{ matcher: '*', hooks: [{ type: 'command', command: hookCmd }] }],
-  };
-
-  let changed = false;
-  for (const [event, blocks] of Object.entries(eventBlocks)) {
-    const raw = settings.hooks[event];
-    const list = Array.isArray(raw) ? raw : raw && typeof raw === 'object' ? [raw] : [];
-    const alreadyConfigured = list.some((b) =>
-      (b.hooks || []).some((h) => h.command === hookCmd)
-    );
-    if (alreadyConfigured) continue;
-    list.push(...blocks);
-    settings.hooks[event] = list;
-    changed = true;
-  }
-
-  if (!changed) return false;
-  fs.mkdirSync(path.dirname(codebuddyPath), { recursive: true });
-  fs.writeFileSync(codebuddyPath, JSON.stringify(settings, null, 2));
-  return true;
-}
-
-export function unconfigureCodebuddy(codebuddyPath = CODEBUDDY_SETTINGS_PATH) {
-  let settings = {};
-  try { settings = JSON.parse(fs.readFileSync(codebuddyPath, 'utf-8')); } catch {}
-  const hooks = settings.hooks;
-  if (!hooks || typeof hooks !== 'object') return false;
-  const isA4p = (b) => (b.hooks || []).some((h) => (h.command || '').includes('a4p hook codebuddy'));
-  let changed = false;
-  for (const event of Object.keys(hooks)) {
-    const entry = hooks[event];
-    if (!Array.isArray(entry)) {
-      if (entry && typeof entry === 'object' && isA4p(entry)) { delete hooks[event]; changed = true; }
-      continue;
-    }
-    const kept = entry.filter((b) => !isA4p(b));
-    if (kept.length !== entry.length) changed = true;
-    if (kept.length) hooks[event] = kept;
-    else delete hooks[event];
-  }
-  if (!changed) return false; // 没有 a4phone 的 Hook：保持文件原样，不重写
-  if (Object.keys(hooks).length === 0) delete settings.hooks;
-  fs.writeFileSync(codebuddyPath, JSON.stringify(settings, null, 2));
-  return true;
-}
-
 // ── DSH（DeepSeek Harness）Hook 插件挂载 ─────────────────────────────
 // 复用本包 dsh/ 插件（Cordis 插件，监听 DSH 会话事件与工具/审批管线），
 // 以 insert 形式追加到各 profile 的 cordis.patch.yml（热生效，无需重启）。
@@ -540,7 +476,6 @@ export async function runSetup({ generateQR }) {
   const claudeConfigured = registerHooks(SETTINGS_PATH, hookCommand());
   const codexConfigured = configureCodex();
   const zcodeConfigured = configureZcode();
-  const codebuddyConfigured = configureCodebuddy();
   const dshResult = configureDsh();
 
   // ZCode 远程续聊：把默认模型配置写入 ~/.zcode/cli/config.json
@@ -570,7 +505,6 @@ export async function runSetup({ generateQR }) {
   process.stdout.write(`Codex 配置：${codexConfigured ? '已自动写入 ~/.codex/config.toml' : '已存在，跳过'}\n`);
   process.stdout.write(`ZCode 配置：${zcodeConfigured ? '已自动写入 ~/.zcode/cli/config.json' : '已存在，跳过'}\n`);
   process.stdout.write(`ZCode 续聊模型：${zcodeModelStatus}\n`);
-  process.stdout.write(`CodeBuddy 配置：${codebuddyConfigured ? '已自动写入 ~/.codebuddy/settings.json' : '已存在，跳过'}\n`);
   let dshStatus;
   if (!fs.existsSync(DSH_PROFILES_DIR)) {
     dshStatus = '未检测到 DSH 环境（~/.dsh/profiles），跳过';
