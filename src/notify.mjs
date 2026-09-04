@@ -1,36 +1,58 @@
 // 系统原生通知（跨平台）
 // 桌面通知的默认路径：守护进程在跑 → 写请求文件由守护进程代发（hook 进程，尤其 ZCode，
-// 退出时会被执行端口杀掉整棵进程树，fire-and-forget 的气泡来不及渲染）；
-// 守护进程不在 → 直接 spawn 弹气泡（Claude Code / Codex / DSH 宿主进程常驻，可正常工作）。
+// 退出时会被执行端口杀掉整棵进程树，fire-and-forget 的通知来不及渲染）；
+// 守护进程不在 → 直接 spawn 弹通知（Claude Code / Codex / DSH 宿主进程常驻，可正常工作）。
+// Windows 走 WinRT Toast（系统通知）：NotifyIcon.ShowBalloonTip 在 Windows 11 上经常
+// 不显示（旧系统托盘机制已被系统通知层取代），WinRT Toast 后台进程可可靠显示并进入操作中心。
 import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
 import { DAEMON_JSON, NOTIFY_QUEUE_DIR, ensureDir } from './paths.mjs';
 
-// 直接 spawn PowerShell 弹气泡（低层原语，守护进程代发时用）
+// WinRT Toast 脚本（Windows 10/11）：标题/正文经环境变量传入，规避 PowerShell
+// 引号与 XML 转义问题。AppId 必须用已注册的 AUMID，否则 Win10 1903+ 会静默丢弃
+// 通知——a4phone 未打包注册，因此借 PowerShell 的注册 AUMID 显示
+// （taost 归属显示为 Windows PowerShell；这是 BurntToast 等库的通用做法）。
+const WINDOWS_POWERSHELL_AUMID = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe';
+const WINDOWS_TOAST_SCRIPT = `$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Runtime.WindowsRuntime | Out-Null
+[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+[Windows.UI.Notifications.ToastNotification, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
+function Xml-Escape([string]\$value) {
+  return \$value.Replace('&','&amp;').Replace('<','&lt;').Replace('>','&gt;').Replace('"','&quot;').Replace("'",'&apos;')
+}
+\$title = Xml-Escape \$env:A4P_TOAST_TITLE
+\$body = Xml-Escape \$env:A4P_TOAST_BODY
+\$xmlDocument = [Windows.Data.Xml.Dom.XmlDocument]::new()
+\$xmlDocument.LoadXml("<toast><visual><binding template='ToastGeneric'><text>\$title</text><text>\$body</text></binding></visual></toast>")
+\$toast = [Windows.UI.Notifications.ToastNotification]::new(\$xmlDocument)
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier(\$env:A4P_TOAST_APPID).Show(\$toast)`;
+
+// 直接 spawn PowerShell 弹系统通知（低层原语，守护进程代发时用）
 function showBalloon(title, message) {
   // 立即返回，不阻塞调用方
   const clean = (s) => (s || '').replace(/"/g, "'");
+  if (process.platform === 'win32') {
+    const child = spawn('powershell', ['-NoProfile', '-Sta', '-WindowStyle', 'Hidden', '-Command', WINDOWS_TOAST_SCRIPT], {
+      env: {
+        ...process.env,
+        A4P_TOAST_APPID: WINDOWS_POWERSHELL_AUMID,
+        A4P_TOAST_TITLE: String(title || '').slice(0, 64),
+        A4P_TOAST_BODY: String(message || '').slice(0, 256),
+      },
+      // windowsHide 隐藏 PowerShell 控制台窗口（否则每次弹通知都会闪出一个黑窗）
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    child.unref();
+    return;
+  }
   const t = clean(title);
   const m = clean(message);
-  let cmd;
-  if (process.platform === 'win32') {
-    // Windows：NotifyIcon 气泡通知（非阻塞，后台显示 3 秒）
-    cmd = [
-      '-NoProfile', '-Command',
-      `Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $n=New-Object System.Windows.Forms.NotifyIcon; $n.Icon=[System.Drawing.SystemIcons]::Information; $n.Visible=$true; $n.ShowBalloonTip(3000,"${t}","${m}",[System.Windows.Forms.ToolTipIcon]::Info); Start-Sleep 3; $n.Dispose()`,
-    ];
-  } else if (process.platform === 'darwin') {
-    cmd = ['-e', `display notification "${m}" with title "${t}"`];
-  } else {
-    cmd = [t, m];
-  }
-  const child = process.platform === 'win32'
-    // windowsHide 隐藏 PowerShell 控制台窗口（否则每次弹气泡都会闪出一个黑窗）
-    ? spawn('powershell', cmd, { stdio: 'ignore', windowsHide: true, detached: process.platform !== 'win32' })
-    : process.platform === 'darwin'
-      ? spawn('osascript', cmd, { stdio: 'ignore' })
-      : spawn('notify-send', cmd, { stdio: 'ignore' });
+  const child = process.platform === 'darwin'
+    ? spawn('osascript', ['-e', `display notification "${m}" with title "${t}"`], { stdio: 'ignore' })
+    : spawn('notify-send', [t, m], { stdio: 'ignore' });
   child.unref();
 }
 
