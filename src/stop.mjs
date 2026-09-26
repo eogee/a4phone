@@ -2,7 +2,7 @@
 import { loadConfig, saveLastSession } from './config.mjs';
 import { sendNotification } from './ntfy.mjs';
 import { systemNotify } from './notify.mjs';
-import { extractLastOutput } from './transcript.mjs';
+import { resolveLastOutput } from './transcript.mjs';
 
 export async function handleStop(input, agentName) {
   const config = loadConfig();
@@ -21,7 +21,8 @@ export async function handleStop(input, agentName) {
   await systemNotify(agentName, '任务已完成');
 
   if (config.topic) {
-    const lastOutput = extractLastOutput(input.transcript_path);
+    // ZCode 在 Stop 载荷直送 last_assistant_message，其余 agent 从 transcript 文件抽取
+    const lastOutput = resolveLastOutput(input);
     const message = lastOutput ? `${details}\n\nAI 最后输出：\n${lastOutput}` : details;
     await sendNotification({
       ...config,
