@@ -276,3 +276,12 @@ node bin/a4p.mjs setup   # 本地调试
 ## 开源协议
 
 [MIT](LICENSE)
+
+---
+
+## 联系方式
+
+- **官网**：<https://eogee.com>
+- **使用文档**：<https://eogee.com/article/54>
+- **QQ**：3886370035 ｜ **微信**：eogee2022
+- **问题反馈**：邮件 [eogee@qq.com](mailto:eogee@qq.com)，或提 [GitHub Issue](https://github.com/eogee/a4phone/issues)
