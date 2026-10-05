@@ -7,6 +7,8 @@ import { fileURLToPath } from 'url';
 import { loadConfig, saveConfig } from './config.mjs';
 
 const SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json');
+// Qoder 的 Hook 配置与 Claude Code 同构（settings.json 顶层 hooks 事件表）
+export const QODER_SETTINGS_PATH = path.join(os.homedir(), '.qoder', 'settings.json');
 
 // 生成唯一话题名
 function generateTopic() {
@@ -476,6 +478,7 @@ export async function runSetup({ generateQR }) {
   const claudeConfigured = registerHooks(SETTINGS_PATH, hookCommand());
   const codexConfigured = configureCodex();
   const zcodeConfigured = configureZcode();
+  const qoderConfigured = registerHooks(QODER_SETTINGS_PATH, 'a4p hook qoder');
   const dshResult = configureDsh();
 
   // ZCode 远程续聊：把默认模型配置写入 ~/.zcode/cli/config.json
@@ -505,6 +508,7 @@ export async function runSetup({ generateQR }) {
   process.stdout.write(`Codex 配置：${codexConfigured ? '已自动写入 ~/.codex/config.toml' : '已存在，跳过'}\n`);
   process.stdout.write(`ZCode 配置：${zcodeConfigured ? '已自动写入 ~/.zcode/cli/config.json' : '已存在，跳过'}\n`);
   process.stdout.write(`ZCode 续聊模型：${zcodeModelStatus}\n`);
+  process.stdout.write(`Qoder 配置：${qoderConfigured ? '已自动写入 ~/.qoder/settings.json' : '已存在，跳过'}\n`);
   let dshStatus;
   if (!fs.existsSync(DSH_PROFILES_DIR)) {
     dshStatus = '未检测到 DSH 环境（~/.dsh/profiles），跳过';
@@ -518,7 +522,7 @@ export async function runSetup({ generateQR }) {
   }
   process.stdout.write(`DSH 配置：${dshStatus}\n`);
   process.stdout.write('模式切换：a4p out（外出/手机优先） / a4p home（终端优先） / a4p status\n');
-  process.stdout.write('重启 Claude Code / Codex / ZCode 会话后 Hook 生效（DSH 插件热生效，无需重启）。\n');
+  process.stdout.write('重启 Claude Code / Codex / ZCode 会话后 Hook 生效（DSH 插件与 Qoder 热生效，无需重启）。\n');
 
   // 默认启动续聊守护进程 + 注册开机自启（失败不阻塞 setup，给出提示）
   try {

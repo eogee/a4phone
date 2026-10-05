@@ -26,6 +26,18 @@ test('Codex 用 codex exec resume，-o 写回复文件、stdin 读消息（无 -
   assert.ok(args.includes('--skip-git-repo-check'));
 });
 
+test('Qoder 每轮 fork 到新会话（无会话锁，避免往活跃会话续写）', () => {
+  const { command, args, newSessionId } = buildResumeArgs('Qoder', 'sess-qoder', 'C:/proj', 'C:/tmp/r.txt');
+  assert.equal(command, 'qoder');
+  assert.ok(!args.includes('--continue'), 'Qoder 拒绝 --resume 与 --continue 并用');
+  assert.equal(args[0], '--resume');
+  assert.equal(args[1], 'sess-qoder');
+  assert.ok(args.includes('--fork-session'), '必须 fork，原会话不受影响');
+  assert.equal(args[args.indexOf('--session-id') + 1], newSessionId, '新会话 ID 预生成，便于写回 last.json');
+  assert.match(newSessionId, /^[0-9a-f]{8}-[0-9a-f]{4}-/);
+  assert.equal(args[args.length - 1], '-p');
+});
+
 test('未知 agent 也按 claude 分支兜底（默认最近会话无 agent 字段）', () => {
   const { command, args } = buildResumeArgs(undefined, 'sess', 'C:/proj', 'C:/tmp/r.txt');
   assert.equal(command, 'claude');

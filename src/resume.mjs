@@ -1,5 +1,7 @@
 // 续聊：把手机发来的文本作为下一条用户消息，续聊当前会话并回推回复
 //   Claude Code：claude --resume <id> --continue -p（headless，stdin 作为消息、stdout 捕获回复）
+//   Qoder：qoder --resume <id> --fork-session --session-id <新ID> -p
+//        （Qoder 无会话锁，每轮 fork 到新会话，成功后把新 ID 写回 last.json 保持手机多轮连续）
 //   Codex：codex exec resume <id> -o <文件> -（headless，stdin 作为消息、-o 把最后一条回复写入文件）
 //   DSH：经 ~/.a4phone/dsh-jobs 文件队列交给 dsh web 进程内的 dsh-hook 插件，
 //        插件直接 followup 到当前 live 会话（手机消息与回复实时出现在桌面会话里）
@@ -42,6 +44,16 @@ export function buildResumeArgs(agent, sessionId, cwd, replyFile) {
         sessionId,
         '-', // 提示词从 stdin 读取
       ],
+    };
+  }
+  // Qoder：--resume 不能与 --continue 并用；且它没有会话锁——直接续聊仍活跃的会话会往同一份
+  // transcript 续写并继续那个会话的任务（实测），所以每轮 fork 到新会话，ID 预生成以便写回 last.json。
+  if (agent === 'Qoder') {
+    const newSessionId = crypto.randomUUID();
+    return {
+      command: 'qoder',
+      args: ['--resume', sessionId, '--fork-session', '--session-id', newSessionId, '-p'],
+      newSessionId,
     };
   }
   return { command: 'claude', args: ['--resume', sessionId, '--continue', '-p'] };
@@ -139,7 +151,11 @@ function spawnCli({ command, args, cwd, input, timeoutMs }, opts = {}) {
     let child;
     try {
       // A4P_RESUME 标记：让 Stop Hook 识别这是续聊子进程，避免重复推送"任务已完成"
-      child = spawn(cmd, cmdArgs, { cwd, shell: false, env: { ...process.env, A4P_RESUME: '1' } });
+      // 剥掉 QODER_AGENT_SDK_ENTRYPOINT：守护进程若从 Qoder 会话里启动会继承它，
+      // 独立 qoder CLI 据此进入 worker 模式并强制要求 stream-json 参数，续聊直接失败
+      const env = { ...process.env, A4P_RESUME: '1' };
+      delete env.QODER_AGENT_SDK_ENTRYPOINT;
+      child = spawn(cmd, cmdArgs, { cwd, shell: false, env });
     } catch (err) {
       resolve({ ok: false, reason: `无法启动 ${command}：${err.message}` });
       return;
@@ -237,7 +253,7 @@ export async function runResume(text, { config = null, onLog = (s) => {} } = {})
     }
   }
 
-  if (agent !== 'Claude Code' && agent !== 'Codex' && agent !== 'ZCode') {
+  if (!['Claude Code', 'Codex', 'ZCode', 'Qoder'].includes(agent)) {
     return { ok: false, reason: `续聊暂不支持 ${agent} 会话。` };
   }
   const textClean = (text || '').trim();
@@ -265,7 +281,7 @@ export async function runResume(text, { config = null, onLog = (s) => {} } = {})
   let sessionId = last.session_id;
   let transcriptPath = last.transcript_path;
   let replyFile = path.join(os.tmpdir(), `a4p-reply-${process.pid}-${Date.now()}.txt`);
-  let { command, args } = buildResumeArgs(agent, sessionId, cwd, replyFile);
+  let { command, args, newSessionId } = buildResumeArgs(agent, sessionId, cwd, replyFile);
 
   let proc = await spawnCli({
     command,
@@ -313,7 +329,17 @@ export async function runResume(text, { config = null, onLog = (s) => {} } = {})
   }
   try { fs.unlinkSync(replyFile); } catch {}
 
-  const name = agent === 'Codex' ? 'Codex' : 'Claude Code';
+  // Qoder 本轮回复落在 fork 出的新会话上：写回 last.json，手机下一轮才能接上同一对话
+  if (agent === 'Qoder' && newSessionId && transcriptPath) {
+    saveLastSession({
+      session_id: newSessionId,
+      cwd,
+      agent: 'Qoder',
+      transcript_path: path.join(path.dirname(transcriptPath), `${newSessionId}.jsonl`),
+    });
+  }
+
+  const name = agent;
   let message;
   const conflict = command === 'codex' && !forked ? codexConflictReason(proc.stderr) : null;
   if (conflict) {

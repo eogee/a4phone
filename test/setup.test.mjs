@@ -7,6 +7,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import {
+  registerHooks,
   unregisterHooks,
   configureCodex,
   unconfigureCodex,
@@ -18,6 +19,30 @@ import {
 function tmpdir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'a4p-setup-test-'));
 }
+
+test('Qoder：Hook 写入 Claude 同构的 settings.json，保留其他配置且卸载可往返', () => {
+  const dir = tmpdir();
+  const p = path.join(dir, 'settings.json');
+  fs.writeFileSync(p, JSON.stringify({
+    enabledPlugins: { 'some-plugin@market': true },
+    hooks: { Stop: [{ matcher: '*', hooks: [{ type: 'command', command: 'node my-other-hook.mjs' }] }] },
+  }, null, 2));
+
+  assert.equal(registerHooks(p, 'a4p hook qoder'), true);
+  let s = JSON.parse(fs.readFileSync(p, 'utf-8'));
+  assert.equal(s.enabledPlugins['some-plugin@market'], true, 'Qoder 的其他配置应原样保留');
+  assert.equal(s.hooks.PreToolUse[0].matcher, 'AskUserQuestion');
+  assert.equal(s.hooks.PreToolUse[0].hooks[0].command, 'a4p hook qoder');
+  assert.equal(s.hooks.Stop.length, 2, '既有 Stop Hook 追加而非覆盖');
+  assert.equal(registerHooks(p, 'a4p hook qoder'), false, '重复注册幂等');
+
+  assert.equal(unregisterHooks(p), true);
+  s = JSON.parse(fs.readFileSync(p, 'utf-8'));
+  assert.equal(s.hooks.PreToolUse, undefined, 'a4phone 的事件应被清除');
+  assert.equal(s.hooks.Stop.length, 1, '只移除 a4phone 的 Hook');
+  assert.equal(s.hooks.Stop[0].hooks[0].command, 'node my-other-hook.mjs');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
 
 test('unregisterHooks 无 a4phone Hook 时不重写文件（保留原格式）', () => {
   const dir = tmpdir();
