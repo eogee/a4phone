@@ -1,7 +1,7 @@
 // buildResumeArgs 单元测试：按最近会话的 agent 构建续聊命令
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildResumeArgs, codexConflictReason, generateThreadId, forkCodexSession } from '../src/resume.mjs';
+import { buildResumeArgs, codexConflictReason, generateThreadId, forkCodexSession, commandAvailable } from '../src/resume.mjs';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -42,6 +42,13 @@ test('未知 agent 也按 claude 分支兜底（默认最近会话无 agent 字�
   const { command, args } = buildResumeArgs(undefined, 'sess', 'C:/proj', 'C:/tmp/r.txt');
   assert.equal(command, 'claude');
   assert.deepEqual(args, ['--resume', 'sess', '--continue', '-p']);
+});
+
+test('commandAvailable 区分 PATH 上有/没有的命令', () => {
+  assert.equal(commandAvailable('node'), true);
+  assert.equal(commandAvailable('a4p-no-such-command-xyz'), false);
+  assert.equal(commandAvailable(''), false);
+  assert.equal(commandAvailable(undefined), false);
 });
 
 test('codexConflictReason 识别 thread-store conflict 并给出可操作提示', () => {

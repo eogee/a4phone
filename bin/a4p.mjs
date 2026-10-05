@@ -165,7 +165,9 @@ if (cmd === '--version' || cmd === '-v' || cmd === 'version') {
     console.error(result.reason);
     process.exit(1);
   }
-  console.log(`续聊完成（退出码 ${result.code}），结果已推送手机。`);
+  console.log(result.code === 0
+    ? '续聊完成（退出码 0），结果已推送手机。'
+    : `续聊未成功（退出码 ${result.code}），详情已推送手机。`);
 } else if (cmd === 'last') {
   const { loadLastSession } = await import('../src/config.mjs');
   const last = loadLastSession();

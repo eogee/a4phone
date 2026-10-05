@@ -139,6 +139,35 @@ export function forkCodexSession({ sessionId, transcriptPath }) {
   return { newId, newTranscriptPath: dst };
 }
 
+// 命令是否可在 PATH 上执行（Windows 需匹配 PATHEXT 后缀，如 qoder.cmd）
+export function commandAvailable(command) {
+  if (!command) return false;
+  if (path.isAbsolute(command)) { try { return fs.existsSync(command); } catch { return false; } }
+  const exts = process.platform === 'win32'
+    ? (process.env.PATHEXT || '.EXE;.CMD;.BAT;.COM').split(';')
+    : [''];
+  for (const dir of (process.env.PATH || '').split(path.delimiter).filter(Boolean)) {
+    for (const ext of exts) {
+      const p = path.join(dir, command + ext);
+      try {
+        if (process.platform === 'win32') { if (fs.statSync(p).isFile()) return true; }
+        else { fs.accessSync(p, fs.constants.X_OK); return true; }
+      } catch {}
+    }
+  }
+  return false;
+}
+
+// 续聊命令缺失时的可操作提示
+function missingCommandHint(agent, command) {
+  if (agent === 'Qoder') {
+    return '续聊未执行：未找到 qoder 命令。Qoder 远程续聊需要独立 CLI——'
+      + 'npm install -g @qoder-ai/qodercli@latest，并执行 qoder login 登录（任务完成通知、提问作答、'
+      + '权限审批不依赖 CLI，仍由桌面端 Hook 正常工作）。';
+  }
+  return `续聊未执行：未找到 ${command} 命令，请确认对应 CLI 已安装且在 PATH 上。`;
+}
+
 // 等待 CLI 进程结束，返回 { ok, code, stdout, stderr, reason, timedOut }
 // opts.wrapCmd=false：直接 spawn command（Windows 下跳过 cmd /c 包装，避免参数引号被破坏）
 // opts.writeStdin=false：不写 stdin（如 ZCode 用 --prompt 传消息）
@@ -221,9 +250,10 @@ async function runZcodeResume(text, { config, onLog, last }) {
       ? `续聊超时已中断（以下为超时前已生成的回复）\n\n${reply}`
       : `续聊超时，未获取到回复。`;
   } else {
+    const label = proc.code === 0 ? '续聊已完成' : '续聊未成功';
     message = reply
-      ? `续聊已完成（退出码 ${proc.code}）\n\n${reply}`
-      : `续聊已完成（退出码 ${proc.code}，无文本输出）`;
+      ? `${label}（退出码 ${proc.code}）\n\n${reply}`
+      : `${label}（退出码 ${proc.code}，无文本输出）`;
   }
   await sendNotification({ ...config, title: 'ZCode', message });
   return { ok: true, code: proc.code };
@@ -282,6 +312,15 @@ export async function runResume(text, { config = null, onLog = (s) => {} } = {})
   let transcriptPath = last.transcript_path;
   let replyFile = path.join(os.tmpdir(), `a4p-reply-${process.pid}-${Date.now()}.txt`);
   let { command, args, newSessionId } = buildResumeArgs(agent, sessionId, cwd, replyFile);
+
+  // 命令不在 PATH 时 cmd.exe 只返回非 0 退出码 + 本地化乱码报错，
+  // 旧逻辑会把它当"续聊完成"推给手机，故启动前先预检
+  if (!commandAvailable(command)) {
+    const reason = missingCommandHint(agent, command);
+    if (lockedOut) setMode(prevMode);
+    onLog(reason);
+    return { ok: false, reason };
+  }
 
   let proc = await spawnCli({
     command,
@@ -351,9 +390,10 @@ export async function runResume(text, { config = null, onLog = (s) => {} } = {})
       ? `续聊超时已中断（以下为超时前已生成的回复）\n\n${reply}`
       : `续聊超时，未获取到回复。`;
   } else {
+    const label = proc.code === 0 ? '续聊已完成' : '续聊未成功';
     message = reply
-      ? `续聊已完成（退出码 ${proc.code}）\n\n${reply}`
-      : `续聊已完成（退出码 ${proc.code}，无文本输出）`;
+      ? `${label}（退出码 ${proc.code}）\n\n${reply}`
+      : `${label}（退出码 ${proc.code}，无文本输出）`;
   }
   await sendNotification({ ...config, title: name, message });
   return { ok: true, code: proc.code };
