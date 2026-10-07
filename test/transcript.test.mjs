@@ -130,3 +130,63 @@ test('resolveLastOutput：两者皆无时返回 null', () => {
   assert.equal(resolveLastOutput({}), null);
   assert.equal(resolveLastOutput(), null);
 });
+
+// ── WorkBuddy ────────────────────────────────────────────────────────
+// WorkBuddy 会话文件（~/.workbuddy/projects/<slug>/<sessionId>.jsonl）的消息结构
+// 与 Claude Code 三个字段全不同：顶层 type="message"（非 assistant）、role 在顶层（非 message.role）、
+// 文本块 type="output_text"（非 text）。实测 5.7.6。
+const wbMessage = (role, text) => JSON.stringify({
+  type: 'message',
+  role,
+  content: [{ type: role === 'assistant' ? 'output_text' : 'input_text', text }],
+});
+const wbSessionMeta = JSON.stringify({
+  type: 'session-meta',
+  sessionId: 'sess-1',
+  meta: { 'codebuddy.ai/hostKind': 'unopted' },
+});
+
+test('WorkBuddy：从 type=message + role=assistant + output_text 取最后输出', () => {
+  const file = writeTranscript([
+    wbSessionMeta,
+    wbMessage('user', '第一条提问'),
+    wbMessage('assistant', '第一轮回复'),
+    wbMessage('user', '继续'),
+    wbMessage('assistant', '第二轮回复（应取这条）'),
+  ]);
+  try {
+    assert.equal(extractLastOutput(file), '第二轮回复（应取这条）');
+  } finally {
+    fs.unlinkSync(file);
+  }
+});
+
+test('WorkBuddy：reasoning 行不影响 assistant 取值', () => {
+  const file = writeTranscript([
+    wbMessage('assistant', '正式回复'),
+    JSON.stringify({ type: 'reasoning', content: [{ type: 'text', text: '思考过程' }] }),
+  ]);
+  try {
+    assert.equal(extractLastOutput(file), '正式回复');
+  } finally {
+    fs.unlinkSync(file);
+  }
+});
+
+test('WorkBuddy：Stop 直送 last_assistant_message 时优先于 transcript', () => {
+  const file = writeTranscript([wbMessage('assistant', '来自 transcript 的输出')]);
+  try {
+    assert.equal(resolveLastOutput({ last_assistant_message: '直送输出', transcript_path: file }), '直送输出');
+  } finally {
+    fs.unlinkSync(file);
+  }
+});
+
+test('WorkBuddy：只有 user 消息时返回 null', () => {
+  const file = writeTranscript([wbSessionMeta, wbMessage('user', '你好')]);
+  try {
+    assert.equal(extractLastOutput(file), null);
+  } finally {
+    fs.unlinkSync(file);
+  }
+});

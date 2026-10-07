@@ -14,6 +14,7 @@ import {
   configureZcode,
   unconfigureZcode,
   stripFeaturesHooksShell,
+  isA4pHookCommand,
 } from '../src/setup.mjs';
 
 function tmpdir() {
@@ -201,4 +202,92 @@ test('stripFeaturesHooksShell：仅移除只剩 hooks = true 的空壳表', () =
   // 无 hooks 的普通 [features] 不受影响
   const plain = '[features]\ndynamic_time_range = true\n';
   assert.equal(stripFeaturesHooksShell(plain), plain);
+});
+
+// ── WorkBuddy Hook 注册与清理 ─────────────────────────────────────────
+// WorkBuddy 的 Hook 协议与 Claude Code 同构，注册直接复用 registerHooks，
+// 无需任何专用逻辑；这里覆盖注册、幂等、以及卸载清理。
+
+test('WorkBuddy：registerHooks / unregisterHooks 完整往返', (t) => {
+  const file = path.join(os.tmpdir(), `a4p-wb-settings-${process.pid}-${Date.now()}.json`);
+  t.after(() => { try { fs.unlinkSync(file); } catch {} });
+
+  const cmd = 'a4p hook workbuddy';
+  assert.equal(registerHooks(file, cmd), true);
+  let s = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  assert.deepEqual(Object.keys(s.hooks).sort(), ['PermissionRequest', 'PreToolUse', 'Stop']);
+  assert.equal(s.hooks.Stop[0].hooks[0].command, cmd);
+  // PreToolUse 只匹配提问工具
+  assert.equal(s.hooks.PreToolUse[0].matcher, 'AskUserQuestion');
+
+  // 幂等：重复注册不写入
+  assert.equal(registerHooks(file, cmd), false);
+
+  assert.equal(unregisterHooks(file), true);
+  s = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  assert.equal(s.hooks, undefined, 'a4phone 的 Hook 全部移除后应删掉 hooks 字段');
+});
+
+test('WorkBuddy：卸载保留用户的其他 Hook', (t) => {
+  const file = path.join(os.tmpdir(), `a4p-wb-settings2-${process.pid}-${Date.now()}.json`);
+  t.after(() => { try { fs.unlinkSync(file); } catch {} });
+
+  fs.writeFileSync(file, JSON.stringify({
+    hooks: {
+      Stop: [
+        { matcher: '*', hooks: [{ type: 'command', command: 'my-own-notifier' }] },
+        { matcher: '*', hooks: [{ type: 'command', command: 'a4p hook workbuddy' }] },
+      ],
+    },
+  }, null, 2));
+
+  assert.equal(unregisterHooks(file), true);
+  const s = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  assert.equal(s.hooks.Stop.length, 1);
+  assert.equal(s.hooks.Stop[0].hooks[0].command, 'my-own-notifier', '用户自己的 Hook 应保留');
+});
+
+test('WorkBuddy：绝对路径写法的 a4p hook 也能被卸载清理', (t) => {
+  // 回归：unregisterHooks 曾只匹配字面量 "a4p hook"，
+  // 用户把命令改成 node /abs/path/a4p.mjs hook workbuddy 后就清不掉了
+  const file = path.join(os.tmpdir(), `a4p-wb-settings3-${process.pid}-${Date.now()}.json`);
+  t.after(() => { try { fs.unlinkSync(file); } catch {} });
+
+  fs.writeFileSync(file, JSON.stringify({
+    hooks: {
+      Stop: [{ matcher: '*', hooks: [{ type: 'command', command: 'node C:/npm/a4p.mjs hook workbuddy' }] }],
+    },
+  }, null, 2));
+
+  assert.equal(unregisterHooks(file), true, '绝对路径写法应被识别为 a4p hook');
+  const s = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  assert.equal(s.hooks, undefined);
+});
+
+test('isA4pHookCommand 识别各种写法且不误伤相似命令', () => {
+  // 属于 a4phone
+  for (const cmd of [
+    'a4p hook',
+    'a4p hook workbuddy',
+    'node C:/x/a4p.mjs hook workbuddy',
+    'node /usr/local/bin/a4p.mjs hook',
+    '"C://x//a4p.mjs" hook',
+    '/usr/local/bin/a4p hook qoder',
+  ]) {
+    assert.equal(isA4pHookCommand(cmd), true, `应识别为 a4p hook: ${cmd}`);
+  }
+  // 不属于 a4phone：清理时绝不能误删
+  for (const cmd of [
+    'node C:/x/wb-probe.mjs',
+    'echo a4p',
+    'a4p resume',
+    'a4p listen',
+    'a4phook',
+    'my-a4p-hook-runner',
+    '',
+    null,
+    undefined,
+  ]) {
+    assert.equal(isA4pHookCommand(cmd), false, `不应识别为 a4p hook: ${cmd}`);
+  }
 });

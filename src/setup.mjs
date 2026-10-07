@@ -9,6 +9,10 @@ import { loadConfig, saveConfig } from './config.mjs';
 const SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json');
 // Qoder 的 Hook 配置与 Claude Code 同构（settings.json 顶层 hooks 事件表）
 export const QODER_SETTINGS_PATH = path.join(os.homedir(), '.qoder', 'settings.json');
+// WorkBuddy 的 Hook 配置同样与 Claude Code 同构，写入 ~/.workbuddy/settings.json。
+// 实测（5.7.6）：注册后当前会话即热生效，无需重启。
+export const WORKBUDDY_SETTINGS_PATH = path.join(os.homedir(), '.workbuddy', 'settings.json');
+export const WORKBUDDY_HOOK_COMMAND = 'a4p hook workbuddy';
 
 // 生成唯一话题名
 function generateTopic() {
@@ -52,6 +56,16 @@ export function registerHooks(settingsPath, hookCommand) {
   return true;
 }
 
+// 判定一条 hook 命令是否属于 a4phone。
+// 覆盖两种常见写法：
+//   1) PATH 上的全局命令：        a4p hook [workbuddy]
+//   2) 绝对路径 / 经 node 启动：  node C:/path/a4p.mjs hook [workbuddy]
+// 同时要求命令里确实出现 "hook" 子命令，避免误删用户其他 a4p 相关命令。
+export function isA4pHookCommand(command) {
+  if (!command || typeof command !== 'string') return false;
+  return /(^|[\\/\s"'])a4p(\.mjs)?["']?\s+hook\b/.test(command);
+}
+
 export function unregisterHooks(settingsPath) {
   let settings = {};
   try {
@@ -60,10 +74,13 @@ export function unregisterHooks(settingsPath) {
   const hooks = settings.hooks;
   if (!hooks || typeof hooks !== 'object') return false; // 无 Hook 配置：不重写文件
   let changed = false;
-  // 只移除 a4phone 的 Hook，保留用户的其他 Hook 与其他事件
+  // 只移除 a4phone 的 Hook，保留用户的其他 Hook 与其他事件。
+  // 判定放宽到"命令里出现 a4p"：既覆盖 PATH 上的 `a4p hook`，
+  // 也覆盖写成绝对路径 / 经 node 启动的 `node /path/to/a4p.mjs hook <agent>`，
+  // 否则这类改写过的配置 uninstall 清不掉。
+  const isA4p = (b) => (b.hooks || []).some((h) => isA4pHookCommand(h.command || ''));
   for (const event of Object.keys(hooks)) {
     const entry = hooks[event];
-    const isA4p = (b) => (b.hooks || []).some((h) => (h.command || '').includes('a4p hook'));
     if (!Array.isArray(entry)) {
       // 手写的单对象条目（非数组）：仅当本身含 a4phone Hook 时才删除，否则原样保留
       if (entry && isA4p(entry)) { delete hooks[event]; changed = true; }
@@ -479,6 +496,7 @@ export async function runSetup({ generateQR }) {
   const codexConfigured = configureCodex();
   const zcodeConfigured = configureZcode();
   const qoderConfigured = registerHooks(QODER_SETTINGS_PATH, 'a4p hook qoder');
+  const workbuddyConfigured = registerHooks(WORKBUDDY_SETTINGS_PATH, WORKBUDDY_HOOK_COMMAND);
   const dshResult = configureDsh();
 
   // ZCode 远程续聊：把默认模型配置写入 ~/.zcode/cli/config.json
@@ -490,6 +508,15 @@ export async function runSetup({ generateQR }) {
     if (synced.ok) zcodeModelStatus = '已写入默认模型配置（续聊时按会话实际模型自动同步）';
     else zcodeModelStatus = `未配置：${synced.reason}`;
   } catch {}
+
+  // WorkBuddy hook 60s 超时防护：hook 脚本超时会被宿主直接终止，等待手机作答的
+  // 外出模式若与超时同刻，答案还没注入就被杀掉。故给 WorkBuddy 单独设一个
+  // 小于宿主超时的作答等待上限（见 src/hook.mjs WORKBUDDY_HOOK_TIMEOUT_MS）。
+  const WORKBUDDY_HOOK_LIMIT_MS = 60 * 1000;
+  const workbuddyWaitSec = Math.max(15, Math.floor(config.timeout ?? 60) - 10);
+  const workbuddyTimeoutNotice = config.timeout > workbuddyWaitSec
+    ? `（作答等待上限已收窄至 ${workbuddyWaitSec}s：WorkBuddy hook 超过 ${WORKBUDDY_HOOK_LIMIT_MS / 1000}s 会被终止）`
+    : '';
 
   const subscribeUrl = `${config.server}/${config.topic}`;
   const ntfyUrl = `ntfy://${new URL(config.server).host}/${config.topic}`;
@@ -509,6 +536,7 @@ export async function runSetup({ generateQR }) {
   process.stdout.write(`ZCode 配置：${zcodeConfigured ? '已自动写入 ~/.zcode/cli/config.json' : '已存在，跳过'}\n`);
   process.stdout.write(`ZCode 续聊模型：${zcodeModelStatus}\n`);
   process.stdout.write(`Qoder 配置：${qoderConfigured ? '已自动写入 ~/.qoder/settings.json' : '已存在，跳过'}\n`);
+  process.stdout.write(`WorkBuddy 配置：${workbuddyConfigured ? '已自动写入 ~/.workbuddy/settings.json' : '已存在，跳过'}${workbuddyTimeoutNotice}\n`);
   let dshStatus;
   if (!fs.existsSync(DSH_PROFILES_DIR)) {
     dshStatus = '未检测到 DSH 环境（~/.dsh/profiles），跳过';

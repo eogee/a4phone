@@ -7,6 +7,9 @@
 //          （结构与 Claude Code 相同但顶层无 type，role 在 message.role）；该临时文件在
 //          hook 进程退出即被 ZCode 清理，且 Stop 载荷已直送 last_assistant_message，
 //          因此优先走 resolveLastOutput，此解析仅作兜底。
+//   WorkBuddy：JSONL，顶层 type="message" + role="assistant"，文本块 type="output_text"
+//          （三个字段都与 Claude Code 不同：type 不是 assistant、role 不在 message.role、
+//          块类型不是 text），会话文件 ~/.workbuddy/projects/<slug>/<sessionId>.jsonl
 import fs from 'fs';
 
 const MAX_LENGTH = 1000; // 推送内容截断长度（中文约 3000 字节，留足 ntfy 4KB 上限余量）
@@ -36,6 +39,14 @@ export function extractLastOutput(transcriptPath) {
       if ((o?.type === 'assistant' || o?.message?.role === 'assistant') && Array.isArray(o.message?.content)) {
         const parts = o.message.content
           .filter((b) => b?.type === 'text' && b.text)
+          .map((b) => b.text);
+        if (parts.length) text = parts.join('\n');
+      }
+      // WorkBuddy：顶层 type="message" + role="assistant"，文本块 type="output_text"
+      // （实测 WorkBuddy 5.7.6 会话文件结构，与 Claude Code 三个字段全不同）
+      if (o?.type === 'message' && o?.role === 'assistant' && Array.isArray(o.content)) {
+        const parts = o.content
+          .filter((b) => (b?.type === 'output_text' || b?.type === 'text') && b.text)
           .map((b) => b.text);
         if (parts.length) text = parts.join('\n');
       }

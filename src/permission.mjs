@@ -27,7 +27,7 @@ function formatMessage(tool_name, tool_input) {
   return message.length > MESSAGE_MAX_LENGTH ? message.slice(0, MESSAGE_MAX_LENGTH) + '...' : message;
 }
 
-export async function handlePermissionRequest(input, agentName) {
+export async function handlePermissionRequest(input, agentName, waitSeconds) {
   const config = loadConfig();
   if (!config.topic) return null;
 
@@ -52,7 +52,11 @@ export async function handlePermissionRequest(input, agentName) {
   if (!sent) return null;
 
   const isPlan = tool_name === 'ExitPlanMode';
-  const timeout = (isPlan ? config.planTimeout : config.timeout) * 1000;
+  // waitSeconds 由调用方按宿主 hook 超时约束收窄（WorkBuddy 上限 60s，会被截到 45s）；
+  // 未传入时回退配置值。planTimeout 同样受该约束——计划审批本就是长等待，
+  // 但宿主超时会先杀掉 hook，故一律以 waitSeconds 为准。
+  const base = waitSeconds ?? (isPlan ? config.planTimeout : config.timeout);
+  const timeout = Math.min(base, isPlan ? config.planTimeout : config.timeout) * 1000;
   const resp = await waitForResponse({ ...config, requestId, timeout });
   if (!resp) return null; // 手机超时 → 回退终端
 

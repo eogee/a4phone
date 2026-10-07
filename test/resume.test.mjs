@@ -101,3 +101,38 @@ test('forkCodexSession 复制会话为新线程 ID，原文件不动', () => {
 
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// ── WorkBuddy 明确不支持远程续聊 ─────────────────────────────────────
+// 回归约束：WorkBuddy 的凭据只在桌面进程内存中，内置 CLI 必须交互式 /login，
+// 无法 headless 续聊。必须给出明确原因，不能静默失败，也不能退化成
+// "暂不支持 X 会话" 这种让用户以为功能坏了的笼统提示。
+test('WorkBuddy 会话续聊返回明确原因而非笼统提示', async (t) => {
+  // 必须隔离 last.json：runResume 读的是真实的 ~/.a4phone/last.json，
+  // 若沿用用户上一次会话的 agent（ZCode/Codex/...），本用例会走错分支而误报。
+  const { LAST_PATH } = await import('../src/config.mjs');
+  const backup = fs.existsSync(LAST_PATH) ? fs.readFileSync(LAST_PATH, 'utf-8') : null;
+  t.after(() => {
+    try {
+      if (backup) fs.writeFileSync(LAST_PATH, backup);
+      else fs.unlinkSync(LAST_PATH);
+    } catch {}
+  });
+  fs.writeFileSync(LAST_PATH, JSON.stringify({
+    session_id: 'wb-test-001', cwd: 'C:/proj', agent: 'WorkBuddy', ts: Date.now(),
+  }));
+
+  const { runResume } = await import('../src/resume.mjs');
+  const r = await runResume('继续');
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /WorkBuddy/, '提示需指明是 WorkBuddy');
+  assert.match(r.reason, /不支持/, '需明确说不支持');
+  // 应告知其余三项能力正常，避免用户误以为整个集成都不能用
+  assert.match(r.reason, /通知|提问/, '需说明其他能力仍可用');
+});
+
+test('buildResumeArgs 不为 WorkBuddy 生成命令（避免误入通用分支）', () => {
+  // WorkBuddy 在runResume 里被提前拦下，不应走到 buildResumeArgs；
+  // 若将来有人把它加进通用分支，这里会暴露（返回的 command 仍是 claude）
+  const { command } = buildResumeArgs('WorkBuddy', 'sess-1', 'C:/proj', 'C:/tmp.txt');
+  assert.notEqual(command, 'codebuddy', '不应为 WorkBuddy 生成 codebuddy 命令');
+});

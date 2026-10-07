@@ -2,7 +2,7 @@
 
 # a4phone
 
-DSH（DeepSeek Harness）/ Claude Code / Codex / ZCode / Qoder 远程手机交互包。通过 [ntfy.sh](https://ntfy.sh) 在手机上接收任务完成通知（含 AI 最后输出），对 AI 提问与权限请求进行远程点选或文字作答，并可从手机直接继续对话。
+DSH（DeepSeek Harness）/ Claude Code / Codex / ZCode / Qoder / WorkBuddy 六个 AI 阵营的远程手机交互包。通过 [ntfy.sh](https://ntfy.sh) 在手机上接收任务完成通知（含 AI 最后输出），对 AI 提问与权限请求进行远程点选或文字作答，并可从手机直接继续对话（WorkBuddy 除外，见 [WorkBuddy](#workbuddy)）。
 
 ## 功能
 
@@ -48,15 +48,15 @@ a4p help         # 显示帮助
 `a4p setup` 自动完成：
 
 1. 生成独一无二的话题名称（如 `a4p-xxxx`），写入 `~/.a4phone/config.json`
-2. 在 `~/.claude/settings.json` 注册三个 Hook（Stop / AskUserQuestion / PermissionRequest），同时写入 `~/.codex/config.toml` 的 Codex Hook（见下文 [Codex](#codex) 一节）、`~/.zcode/cli/config.json` 的 ZCode Hook（见下文 [ZCode](#zcode) 一节）与 `~/.qoder/settings.json` 的 Qoder Hook（见下文 [Qoder](#qoder) 一节）
+2. 在 `~/.claude/settings.json` 注册三个 Hook（Stop / AskUserQuestion / PermissionRequest），同时写入 `~/.codex/config.toml` 的 Codex Hook（见下文 [Codex](#codex) 一节）、`~/.zcode/cli/config.json` 的 ZCode Hook（见下文 [ZCode](#zcode) 一节）、`~/.qoder/settings.json` 的 Qoder Hook（见下文 [Qoder](#qoder) 一节）与 `~/.workbuddy/settings.json` 的 WorkBuddy Hook（见下文 [WorkBuddy](#workbuddy) 一节）
 3. 检测到 DSH 环境时，把内置 `dsh-hook` 插件挂载到 `~/.dsh/profiles/` 下**所有 profile** 的 `cordis.patch.yml`（web / tui / dsh-tui 等；守护进程后续每 10 分钟重扫，新装 profile 自动补挂，见下文 [DSH](#dshdeepseek-harness) 一节）
 4. **默认启动续聊守护进程**（`a4p listen` 后台运行）
 5. **默认注册开机自启**（Windows 启动文件夹写入隐藏 VBS，登录时自动运行守护进程）
 6. 在终端显示二维码
 
-然后用手机 ntfy App 扫描二维码或输入话题名称订阅；DSH 插件与 Qoder Hook 热生效无需重启，重启 Claude Code / Codex / ZCode 会话后 Hook 生效。
+然后用手机 ntfy App 扫描二维码或输入话题名称订阅；DSH 插件与 Qoder / WorkBuddy Hook 热生效无需重启，重启 Claude Code / Codex / ZCode 会话后 Hook 生效。
 
-> 开机自启无需管理员权限（当前用户启动文件夹），可用 `a4p autostart --off` 关闭、`--on` 重新开启；`a4p uninstall` 会一并移除。WSL/Linux 暂不支持自动注册，可手动用 tmux / systemd 常驻。
+**开机自启无需管理员权限**（当前用户启动文件夹），可用 `a4p autostart --off` 关闭、`--on` 重新开启；`a4p uninstall` 会一并移除。WSL/Linux 暂不支持自动注册，可手动用 tmux / systemd 常驻。
 
 ### 模式切换
 
@@ -66,7 +66,7 @@ a4p home       # 终端优先模式（默认）：直接走终端，手机不参
 a4p status     # 查看当前模式
 ```
 
-> 切换即时生效，无需重启会话。
+模式切换即时生效，无需重启会话。
 
 ### 桌面弹窗
 
@@ -116,11 +116,13 @@ AI 提问、权限请求、任务完成时的**电脑弹窗**统一由**常驻�
    a4p last
    ```
 
-> 续聊完全 headless 运行（无需窗口标题匹配、前台焦点或剪贴板，也不依赖你当前是否开着终端），支持 DSH、Claude Code、Codex、Qoder 与 ZCode 会话（按最近会话的 agent 自动选择续聊方式）。续聊回合内若再次触发提问/权限请求，仍会推送手机，形成完整的远程对话闭环。
->
-> **ZCode 续聊的模型跟随**：ZCode 的模型/provider 由桌面 app 管理（`~/.zcode/v2/config.json`），headless 续聊需要 `~/.zcode/cli/config.json` 里有显式模型配置。a4phone 在每次续聊前从该会话的 rollout 记录读取**会话实际使用的模型**，并自动同步到 `~/.zcode/cli/config.json` —— 你在桌面端切换模型后，续聊自动跟随切换后的模型（`a4p setup` 会先写入一个默认配置）。
->
-> **积压合并**：一轮续聊最长可达 `resumeTimeout`（默认 30 分钟），期间手机连续发来的消息会自动**合并为一个批次**一次性续聊（不再逐条排队、每条一个独立轮次），保证手机内容一定能送达 AI；积压批次持久化到 `~/.a4phone/pending-batch.json`，守护进程重启/崩溃后自动恢复，不丢消息。
+续聊完全 headless 运行（无需窗口标题匹配、前台焦点或剪贴板，也不依赖你当前是否开着终端），支持 DSH、Claude Code、Codex、Qoder 与 ZCode 会话（按最近会话的 agent 自动选择续聊方式）。续聊回合内若再次触发提问/权限请求，仍会推送手机，形成完整的远程对话闭环。
+
+**WorkBuddy 不在此列**——其凭据只在桌面进程内存中，内置 CLI 需交互式登录，无法 headless 续聊（详见 [WorkBuddy](#workbuddy)）。手机向话题发文字时会收到明确提示而非静默失败。
+
+**ZCode 续聊的模型跟随**：ZCode 的模型/provider 由桌面 app 管理（`~/.zcode/v2/config.json`），headless 续聊需要 `~/.zcode/cli/config.json` 里有显式模型配置。a4phone 在每次续聊前从该会话的 rollout 记录读取**会话实际使用的模型**，并自动同步到 `~/.zcode/cli/config.json` —— 你在桌面端切换模型后，续聊自动跟随切换后的模型（`a4p setup` 会先写入一个默认配置）。
+
+**积压合并**：一轮续聊最长可达 `resumeTimeout`（默认 30 分钟），期间手机连续发来的消息会自动**合并为一个批次**一次性续聊（不再逐条排队、每条一个独立轮次），保证手机内容一定能送达 AI；积压批次持久化到 `~/.a4phone/pending-batch.json`，守护进程重启/崩溃后自动恢复，不丢消息。
 
 ## Codex
 
@@ -147,9 +149,9 @@ type = "command"
 command = "a4p hook codex"
 ```
 
-> 注意：启用项必须放在 `[features]` 表内（`[features] hooks = true`），不能写成根级别的裸 `hooks = true`，否则与 `[[hooks.*]]` 冲突导致 TOML 解析错误。Codex 会话中需运行 `/hooks` 并手动信任新 Hook。
->
-> Codex 的提问工具叫 `request_user_input`（不是 `AskUserQuestion`），PreToolUse 的 matcher 必须匹配该名称 hook 才会触发。Codex 端无法像 Claude Code 那样用 `updatedInput` 注入答案，a4phone 采用"阻断工具调用、把手机答案写进阻断原因"的方式，让模型看到答案后直接采用继续。
+**注意**：启用项必须放在 `[features]` 表内（`[features] hooks = true`），不能写成根级别的裸 `hooks = true`，否则与 `[[hooks.*]]` 冲突导致 TOML 解析错误。Codex 会话中需运行 `/hooks` 并手动信任新 Hook。
+
+Codex 的提问工具叫 `request_user_input`（不是 `AskUserQuestion`），PreToolUse 的 matcher 必须匹配该名称 hook 才会触发。Codex 端无法像 Claude Code 那样用 `updatedInput` 注入答案，a4phone 采用"阻断工具调用、把手机答案写进阻断原因"的方式，让模型看到答案后直接采用继续。
 
 ## ZCode
 
@@ -173,7 +175,7 @@ ZCode 支持的事件与 Claude Code 一致（`Stop` / `PreToolUse` / `Permissio
 - **提问触发两次 hook**：ZCode 对一次 `AskUserQuestion` 会同时触发 `PreToolUse` 和 `PermissionRequest` 两个 hook。a4phone 只在 `PreToolUse` 分支弹「有提问需要处理」提醒（`PermissionRequest` 分支对提问跳过弹窗，避免重复通知和误导性的「有权限请求需要处理」文案）；外出模式下两者配合完成手机作答——提问走 asku 注入答案（`updatedInput.answers`），权限请求自动放行（`decision.behavior: "allow"`），与 ZCode 的 hook 输出 schema 兼容。
 - **桌面弹窗需守护进程代发**：ZCode 的执行端口会在 hook 命令退出时杀掉整棵进程树，hook 内直接弹窗来不及渲染。因此桌面弹窗统一由常驻守护进程从 `~/.a4phone/notify-queue/` 队列代发（见 [桌面弹窗](#桌面弹窗)），**ZCode 的桌面提醒依赖守护进程在运行**（`a4p setup` 默认启动并注册开机自启；`a4p listen --status` 可随时查看状态）。
 
-> 重启 ZCode 会话后 Hook 生效。提问与权限请求的桌面弹窗在 home / out 模式下均会触发；手机点选仅外出模式参与。**远程续聊已支持 ZCode 会话**（headless 调 zcode CLI，见 [远程续聊](#远程续聊)）；`a4p uninstall` 会一并移除 ZCode Hook。
+重启 ZCode 会话后 Hook 生效。提问与权限请求的桌面弹窗在 home / out 模式下均会触发；手机点选仅外出模式参与。**远程续聊已支持 ZCode 会话**（headless 调 zcode CLI，见 [远程续聊](#远程续聊)）；`a4p uninstall` 会一并移除 ZCode Hook。
 
 ## Qoder
 
@@ -196,7 +198,36 @@ ZCode 支持的事件与 Claude Code 一致（`Stop` / `PreToolUse` / `Permissio
 - **Stop 载荷直送 AI 输出**：载荷含 `session_id` / `transcript_path` / `cwd` / `hook_event_name` / `last_assistant_message`，任务完成通知直接取该字段；会话记录位于 `~/.qoder/projects/<项目>/<会话ID>.jsonl`，格式与 Claude Code 一致
 - **Hook 执行环境**：Windows 下由 Git Bash 执行、工作目录已是项目根，因此 `a4p` 需在 PATH 上（`npm install -g a4phone` 即满足）
 
-> **远程续聊需要独立的 Qoder CLI 并已登录**：安装 `npm install -g @qoder-ai/qodercli@latest`，再执行 `qoder login`（CLI 的登录态与桌面端各自独立）。Qoder **没有会话锁**：直接 `--resume` 一个仍活跃的会话并不会报错，而是往同一份会话记录续写、继续那个会话的任务，因此 a4phone 的 Qoder 续聊一律 `--fork-session` 到新会话（实测原会话完全不被改动，手机侧多轮上下文自动衔接）；另注意 `--resume` 不能与 `--continue` 并用。只装桌面端未装 CLI 时，通知/提问作答/权限审批照常可用，仅续聊会提示无法启动。`a4p uninstall` 会一并移除 Qoder Hook。
+**远程续聊需要独立的 Qoder CLI 并已登录**：安装 `npm install -g @qoder-ai/qodercli@latest`，再执行 `qoder login`（CLI 的登录态与桌面端各自独立）。Qoder 没有会话锁：直接 `--resume` 一个仍活跃的会话并不会报错，而是往同一份会话记录续写、继续那个会话的任务，因此 a4phone 的 Qoder 续聊一律 `--fork-session` 到新会话（实测原会话完全不被改动，手机侧多轮上下文自动衔接）；另注意 `--resume` 不能与 `--continue` 并用。只装桌面端未装 CLI 时，通知/提问作答/权限审批照常可用，仅续聊会提示无法启动。`a4p uninstall` 会一并移除 Qoder Hook。
+
+## WorkBuddy
+
+`a4p setup` 会把 WorkBuddy 的 Hook 写入 `~/.workbuddy/settings.json`（保留你原有的所有设置）。WorkBuddy 与 Claude Code 同源，**Hook 协议完全同构**，因此三个事件块、Hook 输出格式、`AskUserQuestion` 提问工具都与 Claude Code 走同一套代码路径，只是 Hook 命令带 `workbuddy` 标识、写入路径不同：
+
+```json
+{
+  "hooks": {
+    "Stop": [ { "matcher": "*", "hooks": [ { "type": "command", "command": "a4p hook workbuddy" } ] } ],
+    "PreToolUse": [ { "matcher": "AskUserQuestion", "hooks": [ { "type": "command", "command": "a4p hook workbuddy" } ] } ],
+    "PermissionRequest": [ { "matcher": "*", "hooks": [ { "type": "command", "command": "a4p hook workbuddy" } ] } ]
+  }
+}
+```
+
+### 实测确认的差异（WorkBuddy 5.7.6 / Windows）
+
+- **Hook 热生效**：写入后当前会话下一次工具调用即触发，**无需重启会话**（实测确认）
+- **会话记录结构不同**：位于 `~/.workbuddy/projects/<项目slug>/<sessionId>.jsonl`，与 Claude Code 同为 JSONL，但消息结构三个字段全不同——顶层 `type: "message"`（非 `assistant`）、`role` 在顶层（非 `message.role`）、文本块 `type: "output_text"`（非 `text`）。`transcript.mjs` 已加专门分支解析
+- **Hook 60 秒超时（重要）**：WorkBuddy hook 脚本超过 60 秒会被宿主直接终止。a4phone 外出模式若等待手机作答恰好到 60s，答案还没注入就被杀掉（手机端已作答但会话无反应）。因此对 WorkBuddy **自动把作答等待上限收窄到 45 秒**（`src/hook.mjs` 的 `resolveWaitSeconds`），留出写回与传输余量；`a4p setup` 会提示当前上限。想更长等待需先确认宿主超时可配
+- **Windows 执行环境**：hook 由 Git Bash 执行，`a4p` 需在 PATH 上（`npm install -g a4phone` 即满足）
+
+**不支持远程续聊（重要限制）**：WorkBuddy 的任务完成通知 / 提问作答 / 权限审批三项正常，但暂不支持从手机续聊。
+
+原因（2026-10-07 实测）：WorkBuddy 桌面端把登录凭据只保存在**桌面进程内存**中（`CODEBUDDY_CREDENTIALS_IN_MEMORY`），并不落盘——`sharedDataPath/auth/<id>.info` 在未显式登录时不存在。因此从任何外部终端调用其内置 CLI（`resources/app.asar.unpacked/cli/bin/codebuddy`）都会报 `Authentication required. Please use /login command`，而 `/login` 是**交互式斜杠命令**，无法在 headless 续聊中非交互完成。
+
+另有一道未确认的关卡：即使手动登录成功，CLI 是否能 `--resume` 续接**桌面端**的历史会话 ID 仍未验证（有资料称 CLI 只能看到自己在终端创建的会话）。基于这两点，a4phone 选择不提供该功能，而非留一个可能静默失败的开关。
+
+需要续聊时请直接回到 WorkBuddy 桌面端继续对话；`a4p resume` 遇到 WorkBuddy 会话会给出明确提示，不会静默失败。
 
 ## DSH（DeepSeek Harness）
 
@@ -204,10 +235,10 @@ ZCode 支持的事件与 Claude Code 一致（`Stop` / `PreToolUse` / `Permissio
 
 | Hook | 触发事件 | 桌面通知 | 手机交互（外出模式） |
 |------|---------|---------|---------------------|
-| 任务完成 | `turn/end` 且 `reason.kind === 'completed'` | ✔ 电脑弹窗 | 手机推送（含 AI 最后输出） |
-| 提问 | `ask_user_question` 工具调用 | ✔ 电脑弹窗「有提问需要处理」 | 手机点选选项 / 文字自由作答 |
-| 权限请求 | `approval/request` | ✔ 电脑弹窗「有权限请求需要处理」 | 手机 Approve / Deny |
-| 远程续聊 | 文件队列 `~/.a4phone/dsh-jobs/`（a4p 写请求，插件回复） | — | 手机发文字 → `agent.followup` 注入当前会话 → 回复推回手机 |
+| 任务完成 | `turn/end` 且 `reason.kind === 'completed'` | 支持，电脑弹窗 | 手机推送（含 AI 最后输出） |
+| 提问 | `ask_user_question` 工具调用 | 支持，电脑弹窗「有提问需要处理」 | 手机点选选项 / 文字自由作答 |
+| 权限请求 | `approval/request` | 支持，电脑弹窗「有权限请求需要处理」 | 手机 Approve / Deny |
+| 远程续聊 | 文件队列 `~/.a4phone/dsh-jobs/`（a4p 写请求，插件回复） | 不适用 | 手机发文字 → `agent.followup` 注入当前会话 → 回复推回手机 |
 
 - 插件位于本包 `dsh/` 目录（Cordis 插件，监听 DSH 的 `session/event`、`tools/execute`、`approval/request` 事件），`a4p setup` 以 insert 形式写入 patch，幂等可重复执行
 - 若检测到旧版手动挂载（指向 `C:\ProgramMine\dsh-hook` 的 `id: dsh-hook`），`a4p setup` 会自动替换为本包路径
@@ -227,29 +258,15 @@ ZCode 支持的事件与 Claude Code 一致（`Stop` / `PreToolUse` / `Permissio
 4. **无会话锁冲突**：不另起进程，所以不存在 Claude Code `--resume` 式的独占锁问题；续聊轮次内若触发提问/审批，仍走手机交互，形成完整闭环
 5. 续聊轮次的"任务完成"推送已自动去重（回复由 a4p 推回，插件不再重复通知）
 
-> 前提：`dsh web` 正在运行且已挂载新版 `dsh-hook` 插件（`a4p setup` 自动挂载，插件代码更新后需重启 `dsh web`）。未检测到 `dsh web` 时续聊会快速失败并给出提示。
+**前提**：`dsh web` 正在运行且已挂载新版 `dsh-hook` 插件（`a4p setup` 自动挂载，插件代码更新后需重启 `dsh web`）。未检测到 `dsh web` 时续聊会快速失败并给出提示。
 
-### ⚠️ 待办：DSH workspace 记账归组缺陷（临时外部方案，关注 DSH 官方修复）
+## DSH workspace 记账归组
 
-**背景**：DSH 存在一个**已知缺陷**——workspace 注册表的会话记账只在"首次启动"时用 header 归组历史目录，此后产生的会话（旧版 TUI、`dsh headless`、部分启动入口等）只写会话日志、不主动记账，于是永久落在"未分组"。该行为官方 README 正文有陈述（"Later cwd-only sessions remain Ungrouped."，v0.1.1-rc.2 启动引导段），但**并未列入** "Known Limitations and Deferred Work" 一节（该节仅列"会话删除能力缺失""header 索引刷新时机"两条），官方 GitHub（deepseek-ai/deepseek-harness）也无对应 issue；0.1.2-rc.1 起官方将其改写为**设计契约**——"sessions created afterwards join a workspace only through `attachSession`"，且注明 "current package constraints, not a task backlog"——**官方视角是无修复计划的既定行为，并非待办缺陷**。（核实：2026-09-03，基于 npm next 0.1.2-rc.1 / GitHub master）
-
-**a4phone 的临时方案**：在 DSH 插件（`dsh/lib/index.js`）中加入"孤儿会话自愈"，在每次插件启动时把已持久化但未记账的会话按 `header.cwd` 归入对应项目（必要时自动新建 workspace 记录）。该方案：
-
-- **幂等**：只处理未记账的会话，重复运行不重复归组；
-- **安全**：失败只记日志，不影响插件启动与其他功能；
-- **临时**：仅作为 DSH 官方修复记账 bug 之前的过渡措施。
-
-**迭代检查项（每次功能迭代 / 代码提交前）**：
-
-1. 检查 DSH 官方（`@deepseek-ai/dsh-workspace`）是否已修复 workspace 记账归组；
-2. 若已修复，评估并**移除**本插件中的"孤儿会话自愈"模块（`config.healWorkspaces` 开关可先关闭再删代码）——它是与 a4phone 核心功能无关的冗余设计，不应长期保留；
-3. 若未修复，保留本方案，并在核实时更新上文对官方态度的描述（截至 0.1.2-rc.1：官方仍无启动期对账，视为设计契约、无修复计划）。
-
-**责任划分**：根因是 DSH 核心 workspace 记账缺陷（DSH 官方应修；注：截至 0.1.2-rc.1 官方将其视为设计契约，未见修复计划）；dsh-tui / 旧入口只是"不主动记账"的设计使然，非其锅；a4phone 是体验受损方而非制造者。
+DSH 存在 workspace 记账归组缺陷（此后产生的会话永久落在"未分组"）。a4phone 在插件中做了"孤儿会话自愈"作为临时过渡措施，该方案与官方修复进展的跟踪记录见 [docs/dsh-workspace-accounting.md](docs/dsh-workspace-accounting.md)。
 
 ## 原理
 
-DSH 插件与 Hook（Claude Code / Codex / ZCode / Qoder）拦截事件后，通过 ntfy.sh 推送带按钮的通知到手机；手机点选或发送文字后，决策经响应话题回传并注入会话。`Stop` 事件同时把 AI 最后输出从会话记录中抽取出来推送手机。电脑弹窗则由常驻守护进程从 `~/.a4phone/notify-queue/` 队列代发（见 [桌面弹窗](#桌面弹窗)）。
+DSH 插件与 Hook（Claude Code / Codex / ZCode / Qoder / WorkBuddy）拦截事件后，通过 ntfy.sh 推送带按钮的通知到手机；手机点选或发送文字后，决策经响应话题回传并注入会话。`Stop` 事件同时把 AI 最后输出从会话记录中抽取出来推送手机。电脑弹窗则由常驻守护进程从 `~/.a4phone/notify-queue/` 队列代发（见 [桌面弹窗](#桌面弹窗)）。
 
 ```
 AI助手触发事件 → a4p hook → ntfy.sh 推送手机 → 手机点选/文字作答 → 决策回传 → 注入会话
@@ -268,6 +285,7 @@ AI助手触发事件 → a4p hook → ntfy.sh 推送手机 → 手机点选/文�
   → AI 回复写入会话并回推手机
   →（DSH 续聊直接发生在桌面正在运行的会话上，手机与桌面看到同一段对话）
   →（Codex 会话被窗口占用时自动 fork 新线程续聊，无需关闭原窗口）
+  →（WorkBuddy 不支持续聊，手机发文字会收到明确提示；请回桌面端继续对话）
 ```
 
 ### Hook 输出格式
@@ -281,6 +299,7 @@ AI助手触发事件 → a4p hook → ntfy.sh 推送手机 → 手机点选/文�
 - 手机订阅后，请在**订阅设置**中开启"即时交付"，否则消息需手动刷新才能收到
 - 续聊支持 DSH、Claude Code、Codex、Qoder 与 ZCode 会话（按最近会话的 agent 自动选择方式）；DSH 续聊需 `dsh web` 正在运行且已挂载新版插件；Codex 续聊通过 `codex exec resume` 执行，需 Codex CLI 已登录、hook 已信任；ZCode 续聊需 ZCode 桌面端已安装（自动探测 `zcode.cjs` 路径），续聊前自动同步会话模型到 `~/.zcode/cli/config.json`；Qoder 续聊需独立 Qoder CLI（`npm install -g @qoder-ai/qodercli@latest`）且已 `qoder login` 登录（CLI 登录态独立于桌面端），仅装桌面端时通知/提问/审批仍可用而续聊会提示未登录
 - DSH 支持任务完成通知 / 提问作答 / 权限审批 / 远程续聊（经内置 `dsh-hook` 插件）
+- **WorkBuddy 支持任务完成通知 / 提问作答 / 权限审批，但不支持远程续聊**（凭据仅存在于桌面进程内存，内置 CLI 需交互式 `/login`；详见 [WorkBuddy](#workbuddy) 一节）。注意其 hook 有 60s 硬超时，外出模式作答等待已自动收窄至 45s
 - 续聊期间守护进程会自动临时切换为外出模式，结束后恢复原模式
 - Claude Code 会话同一时间只能被一个进程占用，`--resume` 续聊前请先结束终端里仍在运行的原会话；Codex 会话被占用时 a4phone 会自动 fork 新线程续聊（复制会话为新线程 ID，原窗口不受影响，手机对话在 fork 上继续）
 - 续聊守护进程默认随 `a4p setup` 启动并注册**开机自启**（Windows 登录时自动运行）；也可手动 `a4p listen`，WSL/Linux 可用 tmux 或 systemd

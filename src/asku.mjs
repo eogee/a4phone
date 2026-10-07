@@ -30,7 +30,7 @@ export function buildAskOutput(agent, questions, answers) {
   };
 }
 
-export async function handleAskUserQuestion(input, agentName, agent = 'claude') {
+export async function handleAskUserQuestion(input, agentName, agent = 'claude', waitSeconds) {
   const config = loadConfig();
   const questions = input.tool_input?.questions || [];
   if (!config.topic || !questions.length) return null;
@@ -70,7 +70,9 @@ export async function handleAskUserQuestion(input, agentName, agent = 'claude') 
       ...(actions ? { actions } : {}),
     });
     if (!sent) return null; // 推送失败 → 回退终端
-    const resp = await waitForResponse({ ...config, requestId, timeout: config.timeout * 1000 });
+    // waitSeconds 由调用方按宿主 hook 超时约束收窄（WorkBuddy 会被截到 45s），未传入回退配置值
+    const wait = waitSeconds ?? config.timeout;
+    const resp = await waitForResponse({ ...config, requestId, timeout: wait * 1000 });
     if (!resp?.answer) return null; // 手机超时 → 回退终端
     // 降级场景下手机可能回编号（如「3」），映射回选项 label；
     // 按钮场景 answer 本就是 label；自由文本则原样作为答案。

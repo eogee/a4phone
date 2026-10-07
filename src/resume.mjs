@@ -6,6 +6,8 @@
 //   DSH：经 ~/.a4phone/dsh-jobs 文件队列交给 dsh web 进程内的 dsh-hook 插件，
 //        插件直接 followup 到当前 live 会话（手机消息与回复实时出现在桌面会话里）
 //   若 Codex 会话被窗口占用（thread-store conflict），自动 fork 成新线程续聊，无需关闭原窗口
+//   注意：WorkBuddy 暂不支持远程续聊（凭据仅存于桌面进程内存 + 无法确认 CLI 能否
+//        续接桌面端会话），但其任务完成通知 / 提问作答 / 权限审批均正常支持。
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -281,6 +283,18 @@ export async function runResume(text, { config = null, onLog = (s) => {} } = {})
     } finally {
       if (lockedOut) setMode(prevMode);
     }
+  }
+
+  // WorkBuddy 已知不支持远程续聊：其桌面端凭据只存在于桌面进程内存中，
+  // 外部 CLI 需交互式 /login 且无法确认能否续接桌面端会话（实测未通过）。
+  // 这里给出明确原因，避免用户以为功能坏了。
+  if (agent === 'WorkBuddy') {
+    return {
+      ok: false,
+      reason: 'WorkBuddy 会话暂不支持远程续聊（任务完成通知 / 提问作答 / 权限审批正常）。'
+        + '原因是其桌面端内置 CLI 需要交互式登录且无法续接桌面端会话。'
+        + '请直接在 WorkBuddy 桌面端继续对话。',
+    };
   }
 
   if (!['Claude Code', 'Codex', 'ZCode', 'Qoder'].includes(agent)) {
