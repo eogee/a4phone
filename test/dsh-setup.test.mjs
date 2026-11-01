@@ -132,6 +132,41 @@ test('configureDsh 挂载到默认模板（含 [] 占位符）时移除占位符
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('configureDsh 跨盘安装时 name 写成 file:// URL，避免 ESM URL scheme 报错', {
+  skip: process.platform !== 'win32' ? '跨盘路径只存在于 Windows' : false,
+}, () => {
+  const dir = tmpdir();
+  const profileDir = path.join(dir, 'profiles', 'web');
+  fs.mkdirSync(profileDir, { recursive: true });
+  // 模拟 a4phone 装在另一个盘符：Windows 的 path.relative 跨盘会返回绝对路径，
+  // loader 会把盘符当成 URL 协议（ERR_UNSUPPORTED_ESM_URL_SCHEME）
+  const otherDrive = path.parse(profileDir).root.slice(0, 2).toLowerCase() === 'e:' ? 'Z:\\' : 'E:\\';
+  const foreignEntry = `${otherDrive}a4phone\\dsh\\lib\\index.js`;
+
+  assert.equal(configureDsh({ profileDir, pluginEntry: foreignEntry }), true);
+  const out = fs.readFileSync(path.join(profileDir, 'cordis.patch.yml'), 'utf-8');
+  assert.match(out, /name: "file:\/\/\/[A-Za-z]:\/a4phone\/dsh\/lib\/index\.js"/,
+    '跨盘时应写入 file:// URL');
+  assert.ok(!/name: "[A-Za-z]:\//.test(out), '不能写入裸盘符路径');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('configureDsh 同盘安装时仍用相对路径（可移植，不写 file://）', () => {
+  const dir = tmpdir();
+  const profileDir = path.join(dir, 'profiles', 'web');
+  fs.mkdirSync(profileDir, { recursive: true });
+  const entry = pluginEntry(dir);
+  fs.mkdirSync(path.dirname(entry), { recursive: true });
+  fs.writeFileSync(entry, '// placeholder\n');
+
+  assert.equal(configureDsh({ profileDir, pluginEntry: entry }), true);
+  const out = fs.readFileSync(path.join(profileDir, 'cordis.patch.yml'), 'utf-8');
+  assert.ok(!out.includes('file://'), '同盘不应退化为 file:// URL');
+  assert.ok(out.includes('name: "../../node_modules/a4phone/dsh/lib/index.js"'),
+    '同盘应为 profile 相对路径');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('unconfigureDsh 移除挂载，保留头注释与其他条目', () => {
   const dir = tmpdir();
   const profileDir = path.join(dir, 'profiles', 'web');

@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { loadConfig, saveConfig } from './config.mjs';
 
 const SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json');
@@ -353,7 +353,8 @@ export function unconfigureZcode(zcodePath = ZCODE_CONFIG_PATH) {
 // 以 insert 形式追加到各 profile 的 cordis.patch.yml（热生效，无需重启）。
 // profile 发现机制：扫描 ~/.dsh/profiles/ 下所有含 cordis.yml 的子目录
 // （web / tui / dsh-tui 及后续新装的变体均可覆盖），插件 name 按各 profile
-// 目录分别计算相对路径；守护进程（a4p listen）周期重扫，新装 profile 自动补挂。
+// 目录分别计算（同盘相对路径；跨盘退化为 file:// URL，见 dshPluginName）；
+// 守护进程（a4p listen）周期重扫，新装 profile 自动补挂。
 const DSH_PROFILES_DIR = path.join(os.homedir(), '.dsh', 'profiles');
 const DSH_MARKER_START = '# ===== a4phone dsh-hook (auto-generated) =====';
 const DSH_MARKER_END = '# ===== end a4phone dsh-hook =====';
@@ -366,6 +367,17 @@ function dshPluginEntry() {
 // Windows 下把反斜杠路径转正斜杠（loader 按 URL 语义解析 name）
 function toPosix(p) {
   return p.split(path.sep).join('/');
+}
+
+// 计算挂载条目里的插件 name（DSH loader 把它当 URL 解析）：
+//   同盘 → profile 相对路径（可移植，profile 目录整体搬家后仍有效）；
+//   跨盘 → Windows 的 path.relative 会直接返回绝对路径（如 E:/a4phone/...），
+//          loader 会把 `e:` 当成 URL 协议，启动即报 ERR_UNSUPPORTED_ESM_URL_SCHEME。
+//          这种情况改用 file:// URL（唯一合法的 Windows 绝对路径写法）。
+function dshPluginName(profileDir, pluginEntry) {
+  const rel = path.relative(profileDir, pluginEntry);
+  if (path.isAbsolute(rel)) return pathToFileURL(pluginEntry).href;
+  return toPosix(rel);
 }
 
 // 生成 dsh-hook 的 patch 挂载块（marker 包裹，便于幂等替换/清理）
@@ -433,8 +445,8 @@ function mountDshHook({ profileDir, pluginEntry }) {
   let content = '';
   try { content = fs.readFileSync(patchPath, 'utf-8'); } catch {}
 
-  // 已挂载本插件的最新相对路径 → 幂等跳过
-  const rel = toPosix(path.relative(profileDir, pluginEntry));
+  // 已挂载本插件的最新路径 → 幂等跳过
+  const rel = dshPluginName(profileDir, pluginEntry);
   const block = dshHookBlock(rel);
   if (content.includes(DSH_MARKER_START) && content.includes(block)) return false;
 

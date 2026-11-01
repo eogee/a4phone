@@ -29,12 +29,36 @@ function Xml-Escape([string]\$value) {
 \$toast = [Windows.UI.Notifications.ToastNotification]::new(\$xmlDocument)
 [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier(\$env:A4P_TOAST_APPID).Show(\$toast)`;
 
+// PowerShell 绝对路径（不走 PATH 解析：部分宿主进程的 PATH 不含
+// System32\WindowsPowerShell\v1.0，spawn('powershell') 会直接 ENOENT）
+function powershellExe() {
+  const root = process.env.SystemRoot || process.env.windir;
+  if (root) {
+    const abs = path.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    try { if (fs.existsSync(abs)) return abs; } catch {}
+  }
+  return 'powershell'; // 找不到就回退 PATH 解析，失败由 error 监听器兜住
+}
+
+// spawn 一个脱离的子进程弹通知。
+// 关键：spawn 失败（ENOENT 等）是以 'error' 事件抛出的，没有监听器时属于
+// unhandled error，会直接杀掉宿主进程——DSH/Codex 这类常驻进程每次任务完成都
+// 调通知，一旦 PATH 异常就表现为“每完成一个任务进程就退出”。通知是尽力而为，
+// 失败必须静默降级。
+// 导出仅为便于单测覆盖监听器是否存在。
+export function spawnDetached(cmd, args, opts) {
+  const child = spawn(cmd, args, opts);
+  child.on('error', () => {});
+  child.unref();
+  return child;
+}
+
 // 直接 spawn PowerShell 弹系统通知（低层原语，守护进程代发时用）
 function showBalloon(title, message) {
   // 立即返回，不阻塞调用方
   const clean = (s) => (s || '').replace(/"/g, "'");
   if (process.platform === 'win32') {
-    const child = spawn('powershell', ['-NoProfile', '-Sta', '-WindowStyle', 'Hidden', '-Command', WINDOWS_TOAST_SCRIPT], {
+    spawnDetached(powershellExe(), ['-NoProfile', '-Sta', '-WindowStyle', 'Hidden', '-Command', WINDOWS_TOAST_SCRIPT], {
       env: {
         ...process.env,
         A4P_TOAST_APPID: WINDOWS_POWERSHELL_AUMID,
@@ -45,15 +69,15 @@ function showBalloon(title, message) {
       stdio: 'ignore',
       windowsHide: true,
     });
-    child.unref();
     return;
   }
   const t = clean(title);
   const m = clean(message);
-  const child = process.platform === 'darwin'
-    ? spawn('osascript', ['-e', `display notification "${m}" with title "${t}"`], { stdio: 'ignore' })
-    : spawn('notify-send', [t, m], { stdio: 'ignore' });
-  child.unref();
+  if (process.platform === 'darwin') {
+    spawnDetached('osascript', ['-e', `display notification "${m}" with title "${t}"`], { stdio: 'ignore' });
+  } else {
+    spawnDetached('notify-send', [t, m], { stdio: 'ignore' });
+  }
 }
 
 // 守护进程是否在运行（读 daemon.json 的 pid 探测存活）
