@@ -320,6 +320,10 @@ node bin/a4p.mjs setup   # 本地调试
 
 [MIT](LICENSE)
 
+## 致谢
+
+- [@ningmengxr](https://github.com/ningmengxr)：报告并提交了 DSH 集成中的两个缺陷——`cordis.patch.yml` 在出厂模板 `[]` 之后追加条目生成非法 YAML 导致 `dsh web` 无法启动（[#1](https://github.com/eogee/a4phone/pull/1)），以及通知 `spawn` 未挂 `error` 监听、`ENOENT` 时拖垮宿主进程（[#2](https://github.com/eogee/a4phone/pull/2)）。1.7.3 的跨盘挂载改用 `file://` URL 修复，也是由这份报告定位的。
+
 ---
 
 ## 联系方式
