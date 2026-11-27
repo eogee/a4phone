@@ -165,12 +165,12 @@ export async function checkForUpdate({
 export function makePhoneNotifier(config, { localVersion = getLocalVersion(), onLog = () => {} } = {}) {
   return async (latest) => {
     onLog(`检测到新版本 ${latest}（当前 ${localVersion}），已推送手机提醒`);
-    const ok = await sendNotification({
+    const result = await sendNotification({
       ...config,
       title: 'a4phone',
       message: `检测到新版本 ${latest}（当前 ${localVersion}）\n\n请运行：npm install -g a4phone 升级`,
     });
-    if (!ok) throw new Error('手机推送失败');
+    if (!result.ok) throw new Error(result.reason || '手机推送失败');
   };
 }
 

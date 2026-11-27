@@ -63,12 +63,12 @@ if (cmd && !['hook', '--version', '-v', 'version', 'help', '--help', '-h'].inclu
       await notifier(latest);
       // 终端提示之外再推送手机，确保用户不会遗落更新消息
       if (cfg.topic) {
-        const ok = await sendNotification({
+        const result = await sendNotification({
           ...cfg,
           title: 'a4phone',
           message: `检测到新版本 ${latest}\n\n请运行：npm install -g a4phone 升级`,
         });
-        if (!ok) throw new Error('手机推送失败');
+        if (!result.ok) throw new Error(result.reason || '手机推送失败');
       }
     },
   }).catch(() => {});
@@ -190,8 +190,8 @@ if (cmd === '--version' || cmd === '-v' || cmd === 'version') {
     console.error('未配置话题，请先运行 a4p setup。');
     process.exit(1);
   }
-  const ok = await sendNotification({ ...config, title: 'a4phone', message: '测试通知：如果手机收到，配置正常。' });
-  console.log(ok ? '测试通知发送成功。' : '发送失败，请检查网络。');
+  const result = await sendNotification({ ...config, title: 'a4phone', message: '测试通知：如果手机收到，配置正常。' });
+  console.log(result.ok ? '测试通知发送成功。' : `发送失败：${result.reason}`);
 } else if (cmd === 'help' || cmd === '--help' || cmd === '-h') {
   showHelp();
 } else {

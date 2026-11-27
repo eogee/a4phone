@@ -63,13 +63,13 @@ export async function handleAskUserQuestion(input, agentName, agent = 'claude', 
     );
     // 浏览器兜底：未订阅响应话题的用户可打开网页版直接回复（自由作答/编号回复都需要）
     lines.push(`（如未订阅响应话题，可浏览器打开 ${config.server}/${config.topic}-response 直接回复）`);
-    const sent = await sendNotification({
+    const result = await sendNotification({
       ...config,
       title: `${agentName}: ${q.header || 'Question'}`,
       message: lines.join('\n'),
       ...(actions ? { actions } : {}),
     });
-    if (!sent) return null; // 推送失败 → 回退终端
+    if (!result.ok) return null; // 推送失败 → 回退终端
     // waitSeconds 由调用方按宿主 hook 超时约束收窄（WorkBuddy 会被截到 45s），未传入回退配置值
     const wait = waitSeconds ?? config.timeout;
     const resp = await waitForResponse({ ...config, requestId, timeout: wait * 1000 });

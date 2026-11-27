@@ -11,8 +11,11 @@
 //          （三个字段都与 Claude Code 不同：type 不是 assistant、role 不在 message.role、
 //          块类型不是 text），会话文件 ~/.workbuddy/projects/<slug>/<sessionId>.jsonl
 import fs from 'fs';
+import path from 'path';
+import { cleanTitle, oneLine, stripHostMarkup } from './textclean.mjs';
 
 const MAX_LENGTH = 1000; // 推送内容截断长度（中文约 3000 字节，留足 ntfy 4KB 上限余量）
+const FIRST_PROMPT_READ_BYTES = 256 * 1024;
 
 // 截断/清洗：空文本返回 null（extractLastOutput 与直送字段共用同一上限）
 export function clampOutput(text) {
@@ -72,4 +75,74 @@ export function extractLastOutput(transcriptPath) {
 // 解析，且其临时 transcript 在 hook 退出即被清理）；其余 agent 无此字段，回退读 transcript 文件
 export function resolveLastOutput({ last_assistant_message, transcript_path } = {}) {
   return clampOutput(last_assistant_message) ?? extractLastOutput(transcript_path);
+}
+
+function textBlocks(content, types) {
+  if (!Array.isArray(content)) return null;
+  const parts = content
+    .filter((block) => block && types.includes(block.type) && block.text)
+    .map((block) => block.text);
+  return parts.length ? parts.join('\n') : null;
+}
+
+function userText(record) {
+  const message = record?.message;
+  if (record?.type === 'user' || message?.role === 'user') {
+    if (typeof message?.content === 'string') return message.content;
+    const text = textBlocks(message?.content, ['text', 'input_text']);
+    if (text) return text;
+  }
+  if (record?.type === 'message' && record.role === 'user') {
+    const text = textBlocks(record.content, ['input_text', 'output_text', 'text']);
+    if (text) return text;
+  }
+  if (record?.type === 'response_item' && record.payload?.type === 'message' && record.payload.role === 'user') {
+    return textBlocks(record.payload.content, ['input_text', 'text']);
+  }
+  return null;
+}
+
+function readHead(transcriptPath, maxBytes) {
+  let fd;
+  try {
+    fd = fs.openSync(transcriptPath, 'r');
+    const buffer = Buffer.alloc(maxBytes);
+    const bytesRead = fs.readSync(fd, buffer, 0, maxBytes, 0);
+    return buffer.subarray(0, bytesRead).toString('utf8');
+  } catch {
+    return '';
+  } finally {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch {}
+    }
+  }
+}
+
+export function extractFirstPrompt(transcriptPath, maxLength = 80, maxBytes = FIRST_PROMPT_READ_BYTES) {
+  if (!transcriptPath || maxBytes <= 0) return null;
+  for (const line of readHead(transcriptPath, maxBytes).split('\n')) {
+    if (!line.trim()) continue;
+    let record;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!record || typeof record !== 'object') continue;
+    const text = userText(record);
+    if (!text?.trim()) continue;
+    const title = oneLine(stripHostMarkup(text), maxLength);
+    if (title) return title;
+  }
+  return null;
+}
+
+export function resolveSessionTopic({ transcript_path, cwd } = {}, fallback = '') {
+  const prompt = extractFirstPrompt(transcript_path);
+  if (prompt) return prompt;
+  if (cwd && cwd !== '未知目录') {
+    const title = cleanTitle(path.basename(String(cwd).trim()));
+    if (title) return title;
+  }
+  return fallback;
 }

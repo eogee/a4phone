@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { extractLastOutput, resolveLastOutput } from '../src/transcript.mjs';
+import { extractFirstPrompt, extractLastOutput, resolveLastOutput, resolveSessionTopic } from '../src/transcript.mjs';
 
 let seq = 0;
 
@@ -189,4 +189,94 @@ test('WorkBuddy：只有 user 消息时返回 null', () => {
   } finally {
     fs.unlinkSync(file);
   }
+});
+
+test('extractFirstPrompt：支持 Claude/Codex/ZCode/WorkBuddy 的用户消息', () => {
+  const cases = [
+    [JSON.stringify({ type: 'user', message: { role: 'user', content: 'Claude 的提问' } }), 'Claude 的提问'],
+    [JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', content: '工具结果不算提问' }] } }), null],
+    [JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Codex 的提问' }] } }), 'Codex 的提问'],
+    [zcodeSynthetic('user', 'ZCode 的提问'), 'ZCode 的提问'],
+    [wbMessage('user', 'WorkBuddy 的提问'), 'WorkBuddy 的提问'],
+  ];
+  for (const [line, expected] of cases) {
+    const file = writeTranscript([line]);
+    try {
+      assert.equal(extractFirstPrompt(file), expected);
+    } finally {
+      fs.unlinkSync(file);
+    }
+  }
+});
+
+test('extractFirstPrompt：首条全是注入时继续寻找真实提问', () => {
+  const injected = '# AGENTS.md instructions for C:\\proj\n\n<INSTRUCTIONS>工作区约定</INSTRUCTIONS>\n\n'
+    + '<environment_context><current_date>2026-11-27</current_date></environment_context>';
+  const file = writeTranscript([
+    JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: injected }] } }),
+    JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '真正的提问在这' }] } }),
+  ]);
+  try {
+    assert.equal(extractFirstPrompt(file), '真正的提问在这');
+  } finally {
+    fs.unlinkSync(file);
+  }
+});
+
+test('extractFirstPrompt：保留用户 XML 并清洗 WorkBuddy 占位符', () => {
+  const xml = '<html><body>帮我看看这个页面布局</body></html>';
+  const xmlFile = writeTranscript([wbMessage('user', xml)]);
+  const placeholderFile = writeTranscript([
+    wbMessage('user', '@image#1:"shot.png" @skill:"C:\\proj\\skills\\video-cover\\SKILL.md" '
+      + '@long-text:"开工 M5..." <long_text_quote>历史摘要</long_text_quote>继续吧'),
+  ]);
+  try {
+    assert.equal(extractFirstPrompt(xmlFile), xml);
+    assert.equal(extractFirstPrompt(placeholderFile), 'video-cover 开工 M5 继续吧');
+  } finally {
+    fs.unlinkSync(xmlFile);
+    fs.unlinkSync(placeholderFile);
+  }
+});
+
+test('extractFirstPrompt：后台任务事件不算用户提问', () => {
+  const event = '<task-notification>\n<task-id>1</task-id>\n<summary>done</summary>\n</task-notification>\n\n'
+    + 'Use the TaskOutput tool with task_id="1" to retrieve unread output.\n'
+    + '[SYSTEM NOTIFICATION - NOT USER INPUT] This is an automated event.';
+  const file = writeTranscript([wbMessage('user', event), wbMessage('user', '接着说正事')]);
+  try {
+    assert.equal(extractFirstPrompt(file), '接着说正事');
+  } finally {
+    fs.unlinkSync(file);
+  }
+});
+
+test('extractFirstPrompt：限长、缺失文件与读取上限', () => {
+  const file = writeTranscript([
+    JSON.stringify({ type: 'user', message: { role: 'user', content: '问'.repeat(200) } }),
+  ]);
+  try {
+    const out = extractFirstPrompt(file);
+    assert.equal(out.length, 83);
+    assert.ok(out.endsWith('...'));
+    assert.equal(extractFirstPrompt(file, 80, 10), null);
+  } finally {
+    fs.unlinkSync(file);
+  }
+  assert.equal(extractFirstPrompt(null), null);
+  assert.equal(extractFirstPrompt(path.join(os.tmpdir(), `missing-${process.pid}-${Date.now()}.jsonl`)), null);
+});
+
+test('resolveSessionTopic：优先首条提问，再回退目录名和宿主名', () => {
+  const file = writeTranscript([
+    JSON.stringify({ type: 'user', message: { role: 'user', content: '修复登录页' } }),
+  ]);
+  try {
+    assert.equal(resolveSessionTopic({ transcript_path: file, cwd: path.join('projects', 'demo') }, 'Claude Code'), '修复登录页');
+  } finally {
+    fs.unlinkSync(file);
+  }
+  assert.equal(resolveSessionTopic({ cwd: path.join('projects', 'demo') }, 'Claude Code'), 'demo');
+  assert.equal(resolveSessionTopic({ cwd: '未知目录' }, 'Qoder'), 'Qoder');
+  assert.equal(resolveSessionTopic({}, 'Codex'), 'Codex');
 });

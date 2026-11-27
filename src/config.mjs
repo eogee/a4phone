@@ -4,22 +4,26 @@ import { CONFIG_PATH, LAST_PATH, ensureDir } from './paths.mjs';
 
 export { CONFIG_PATH, LAST_PATH } from './paths.mjs'; // 兼容旧引用
 
+export function normalizeConfig(cfg = {}) {
+  return {
+    topic: cfg.topic || '',
+    server: (cfg.server || 'https://ntfy.sh').replace(/\/+$/, ''),
+    token: String(cfg.token || '').trim(),
+    timeout: cfg.timeout ?? 60,
+    planTimeout: cfg.planTimeout ?? 300,
+    resumeTimeout: cfg.resumeTimeout ?? 1800, // 续聊超时（秒），默认 30 分钟
+    checkUpdates: cfg.checkUpdates ?? true, // 版本更新检查（守护进程推手机 / 命令终端提示）
+    updateIntervalHours: cfg.updateIntervalHours ?? 6, // 检查间隔（小时）
+  };
+}
+
 export function loadConfig() {
   try {
     let raw = fs.readFileSync(CONFIG_PATH, 'utf-8');
     if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1); // 剥离 UTF-8 BOM（PowerShell 写入可能带）
-    const cfg = JSON.parse(raw);
-    return {
-      topic: cfg.topic || '',
-      server: (cfg.server || 'https://ntfy.sh').replace(/\/+$/, ''),
-      timeout: cfg.timeout ?? 60,
-      planTimeout: cfg.planTimeout ?? 300,
-      resumeTimeout: cfg.resumeTimeout ?? 1800, // 续聊超时（秒），默认 30 分钟
-      checkUpdates: cfg.checkUpdates ?? true, // 版本更新检查（守护进程推手机 / 命令终端提示）
-      updateIntervalHours: cfg.updateIntervalHours ?? 6, // 检查间隔（小时）
-    };
+    return normalizeConfig(JSON.parse(raw));
   } catch {
-    return { topic: '', server: 'https://ntfy.sh', timeout: 60, planTimeout: 300, resumeTimeout: 1800, checkUpdates: true, updateIntervalHours: 6 };
+    return normalizeConfig();
   }
 }
 

@@ -2,12 +2,13 @@
 import { loadConfig, saveLastSession } from './config.mjs';
 import { sendNotification } from './ntfy.mjs';
 import { systemNotify } from './notify.mjs';
-import { resolveLastOutput } from './transcript.mjs';
+import { resolveLastOutput, resolveSessionTopic } from './transcript.mjs';
 
 export async function handleStop(input, agentName) {
   const config = loadConfig();
   const cwd = input.cwd || '未知目录';
   const session = input.session_id ? input.session_id.slice(0, 8) : '—';
+  const title = resolveSessionTopic(input, agentName);
   const details = `任务已完成\n目录: ${cwd}\n会话: ${session}`;
 
   // 记录最近会话，供续聊（a4p resume / a4p listen）使用
@@ -26,7 +27,7 @@ export async function handleStop(input, agentName) {
     const message = lastOutput ? `${details}\n\nAI 最后输出：\n${lastOutput}` : details;
     await sendNotification({
       ...config,
-      title: agentName,
+      title,
       message,
     });
   }

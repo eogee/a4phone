@@ -48,8 +48,8 @@ export async function handlePermissionRequest(input, agentName, waitSeconds) {
     actions.splice(1, 0, { action: 'http', label: 'Always Approve', url, method: 'POST', clear: false, body: JSON.stringify({ requestId, approved: true, alwaysAllow: true }) });
   }
 
-  const sent = await sendNotification({ ...config, title: `${agentName}: ${tool_name}`, message, actions });
-  if (!sent) return null;
+  const result = await sendNotification({ ...config, title: `${agentName}: ${tool_name}`, message, actions });
+  if (!result.ok) return null;
 
   const isPlan = tool_name === 'ExitPlanMode';
   // waitSeconds 由调用方按宿主 hook 超时约束收窄（WorkBuddy 上限 60s，会被截到 45s）；

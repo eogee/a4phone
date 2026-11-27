@@ -12,7 +12,7 @@ import { loadConfig, loadLastSession } from './config.mjs';
 import { runResume } from './resume.mjs';
 import { createBatcher } from './batcher.mjs';
 import { checkForUpdate, makePhoneNotifier } from './update-check.mjs';
-import { parseNtfyMessage } from './ntfy.mjs';
+import { ntfyAuthHeaders, ntfyFailureReason, parseNtfyMessage } from './ntfy.mjs';
 import { processNotifyQueue } from './notify.mjs';
 import { PENDING_PATH, ensureDir } from './paths.mjs';
 import { configureDsh } from './setup.mjs';
@@ -163,9 +163,9 @@ export async function runListen({ onLog = (s) => console.log(s) } = {}) {
   while (true) {
     try {
       const since = `since=${lastTime + 1}`; // 从最后收到的消息之后继续
-      const res = await fetch(`${url}?${since}`);
+      const res = await fetch(`${url}?${since}`, { headers: ntfyAuthHeaders(config.token) });
       if (!res.ok) {
-        onLog(`连接失败（HTTP ${res.status}），${RETRY_DELAY / 1000} 秒后重连...`);
+        onLog(`连接失败（${ntfyFailureReason(res.status)}），${RETRY_DELAY / 1000} 秒后重连...`);
         await sleep(RETRY_DELAY);
         continue;
       }

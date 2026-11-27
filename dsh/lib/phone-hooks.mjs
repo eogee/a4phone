@@ -118,13 +118,13 @@ export async function handleAskUserQuestion(exec) {
       process.stderr.write(`[dsh-hook] 选项 ${options.length} 个超 ntfy 按钮上限(3)，已降级为文字作答\n`);
     }
 
-    const sent = await sendNotification({
+    const result = await sendNotification({
       ...cfg,
       title: `DSH: ${q.header || 'Question'}`,
       message: lines.join('\n'),
       ...(actions ? { actions } : {}),
     });
-    if (!sent) return null; // 推送失败 → 回退终端
+    if (!result.ok) return null; // 推送失败 → 回退终端
 
     const resp = await waitForResponse({ ...cfg, requestId, timeout: cfg.timeout * 1000 });
     if (!resp?.answer) return null; // 手机超时 → 回退终端
@@ -173,8 +173,8 @@ export async function handleApprovalRequest(req) {
     { action: 'http', label: 'Deny', url, method: 'POST', clear: false, body: JSON.stringify({ requestId, approved: false }) },
   ];
 
-  const sent = await sendNotification({ ...cfg, title: `DSH: ${toolName}`, message, actions });
-  if (!sent) return null;
+  const result = await sendNotification({ ...cfg, title: `DSH: ${toolName}`, message, actions });
+  if (!result.ok) return null;
 
   const resp = await waitForResponse({ ...cfg, requestId, timeout: cfg.timeout * 1000 });
   if (!resp) return null; // 手机超时 → 回退
